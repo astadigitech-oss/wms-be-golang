@@ -65,5 +65,12 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/stagging-approves", controllers.StaggingApprovement) // ProductController.go
 		protected.POST("/stagging-approves", controllers.StaggingApprovesStore) // ProductController.go
 		protected.DELETE("/stagging-approves/:product_id", controllers.DestroyStaggingApprove) // ProductController.go
+
+		/* ==================== Account Setting ==================== */
+		protected.GET("/roles", controllers.GetRoles) //UserController.go
+		protected.GET("/users", controllers.GetUsers) //UserController.go
+		protected.POST("/users", controllers.CreateUser) //UserController.go
+		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
+		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
 	}
 }

@@ -176,3 +176,20 @@ func NewCustomError(code int, msg string, err error) *CustomError {
 		Err:        err,
 	}
 }
+
+func GetToday() string {
+	location,_ := time.LoadLocation("Asia/Jakarta")
+
+	nowInJakarta := time.Now().In(location)
+
+	// 3. Truncate waktu ke awal hari (00:00:00) di Jakarta
+	startOfDayInJakarta := time.Date(
+		nowInJakarta.Year(),
+		nowInJakarta.Month(),
+		nowInJakarta.Day(),
+		0, 0, 0, 0,
+		location,
+	)
+
+	return startOfDayInJakarta.Format("2006-01-02")
+}

@@ -2,15 +2,16 @@ package controllers
 
 import (
 	"liquid8/wms/config"
+	"liquid8/wms/helpers"
 	"liquid8/wms/models"
-	
+
+	"database/sql"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
-	"database/sql"
+	// "time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -316,22 +317,8 @@ func GetUserScanWeb(c *gin.Context) {
 	// Tempat penyimpanan hasil
 	var usw []models.UserScanWeb
 	summary := ScanSummary{}
-    
-    location,_ := time.LoadLocation("Asia/Jakarta")
 
-	nowInJakarta := time.Now().In(location)
-
-	// 3. Truncate waktu ke awal hari (00:00:00) di Jakarta
-	startOfDayInJakarta := time.Date(
-		nowInJakarta.Year(),
-		nowInJakarta.Month(),
-		nowInJakarta.Day(),
-		0, 0, 0, 0,
-		location,
-	)
-
-	today := startOfDayInJakarta.Format("2006-01-02")
-
+	today := helpers.GetToday()
 
 	// --- 1. Go Routine: Ambil Data Detail (usw) ---
 	wg.Add(1)
@@ -394,14 +381,24 @@ func GetUserScanWeb(c *gin.Context) {
 	go func() {
 		defer wg.Done()
         // ... (Kueri sama seperti sebelumnya: COUNT WHERE scanned_at >= startOfDay)
+		var totalScanToday sql.NullInt64
 		err := config.DB.
 			Model(&models.UserScanWeb{}).
 			Where("code_document = ?", codeDocument).
 			Where("scan_date >= ?", today).
-			Count(&summary.TotalScansToday).Error
+			Select("SUM(total_scans)").
+            Row().
+            Scan(&totalScanToday)
 
-		if err != nil {
-			errChan <- fmt.Errorf("error counting today's scans: %w", err)
+		if err != nil && err != sql.ErrNoRows { // Pastikan tidak mengabaikan error kecuali ErrNoRows (jika DB spesifik)
+            errChan <- fmt.Errorf("error counting today's scans: %w", err)
+            return
+        }
+
+        if totalScanToday.Valid {
+			summary.TotalScansToday = totalScanToday.Int64
+		} else {
+			summary.TotalScansToday = 0
 		}
 	}()
 
