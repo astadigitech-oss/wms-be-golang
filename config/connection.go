@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/joho/godotenv"
 	"gorm.io/driver/mysql"
@@ -13,9 +14,15 @@ import (
 var DB *gorm.DB
 
 func InitDB() {
-	err := godotenv.Load()
+	exe, _ := os.Executable()
+	exePath := filepath.Dir(exe)
+	err := godotenv.Load(filepath.Join(exePath, ".env"))
 	if err != nil {
-		log.Fatal("Gagal memuat .env ", err)
+		// coba load dari Current Working Directory
+		err = godotenv.Load() 
+		if err != nil {
+			log.Fatal("Gagal memuat .env ", err)
+		}
 	}
 
 	user := os.Getenv("DB_USER")

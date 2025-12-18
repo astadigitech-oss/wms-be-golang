@@ -14,7 +14,7 @@ func main() {
 
 	// Middleware CORS
 	server.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "http://localhost:3000") // frontend origin
+		c.Header("Access-Control-Allow-Origin", "*") // frontend origin
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		c.Header("Access-Control-Allow-Credentials", "true") // optional jika kamu pakai cookies
