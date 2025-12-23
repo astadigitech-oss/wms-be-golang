@@ -40,9 +40,6 @@ func RouteHandler(r *gin.Engine) {
 		protected.DELETE("/documents/product_old/:id", controllers.DestroyProductOld) // DocumentController.go
 		protected.POST("/product-approve/:product_old_id", controllers.ProductApprove) // ProductController.go
 
-		// categories enpoint
-		protected.GET("/categories", controllers.Categories) //CategoryController.go
-
 		//Riwayat Check Routes
 		protected.GET("/check-histories", controllers.CheckHistories); //DocumentController.go
 		protected.GET("/check-histories/:history_id", controllers.DetailHistory); //DocumentController.go
@@ -65,12 +62,18 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/stagging-approves", controllers.StaggingApprovement) // ProductController.go
 		protected.POST("/stagging-approves", controllers.StaggingApprovesStore) // ProductController.go
 		protected.DELETE("/stagging-approves/:product_id", controllers.DestroyStaggingApprove) // ProductController.go
+		
+		/* ==================== INVENTORY ==================== */
+		//Product
+		protected.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
+		protected.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
+		protected.PUT("/products/:id/status-dump", controllers.UpdateProductStatus) // ProductController.go
+		protected.DELETE("/products/inventory/:id", controllers.DeleteProductInventory) // ProductController.go
 
-		/* ==================== Account Setting ==================== */
-		protected.GET("/roles", controllers.GetRoles) //UserController.go
-		protected.GET("/users", controllers.GetUsers) //UserController.go
-		protected.POST("/users", controllers.CreateUser) //UserController.go
-		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
-		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
+		//category Setting
+		protected.GET("/categories", controllers.Categories) //CategoryController.go
+		protected.POST("/categories", controllers.AddCategory) //CategoryController.go
+		protected.PUT("/categories/:id", controllers.UpdateCategory) //CategoryController.go
+		protected.DELETE("/categories/:id", controllers.DeleteCategory) //CategoryController.go
 	}
 }
