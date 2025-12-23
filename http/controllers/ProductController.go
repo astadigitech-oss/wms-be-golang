@@ -671,6 +671,7 @@ func StaggingProductUpdate(c *gin.Context) {
         }
 
         if err := tx.Create(&approveQueue).Error; err != nil {
+            tx.Rollback()
             c.JSON(500, gin.H{"status": false, "error": err.Error()})
             return
         }
@@ -686,17 +687,20 @@ func StaggingProductUpdate(c *gin.Context) {
         }
 
         if err := tx.Create(&notification).Error; err != nil {
+            tx.Rollback()
             c.JSON(500, gin.H{"status": false, "error": err.Error()})
             return
         }
     }else {
         if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {
+            tx.Rollback()
             c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
             return
         }
     }
 
     if err := helpers.LogUserAction(user.ID, user.Name, "Edit Product Stagging "+product.Barcode, "staging/product/detail", logDetails); err != nil {
+        tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal membuat log user action", "error": err.Error()})
         return
     }
@@ -1123,4 +1127,515 @@ func StaggingApprovesStore(c *gin.Context) {
 			"message": "Product berhasil diapprove",
 		},
 	})
+}
+
+// ============================= IVENTORY PRODUCT =============================
+//Product
+func GetProductsByColor(c *gin.Context) {
+    q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	//inisialisasi query
+	baseQuery := config.DB.Model(&models.Product{}).
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+        Where("products.tag_color_id IS NOT NULL").
+        Where("products.category_id IS NULL").
+        Where("products.is_so IS NULL").
+        Where("products.status = ?", "display").
+        Where("products.location_type = ?", "main").
+        Where("products.quality = ?", "lolos").
+        Where("(products.warehouse_type IS NULL OR products.warehouse_type = 'type1')")
+
+	// Searching (misalnya, mencari berdasarkan nama atau email)
+	if q != "" {
+		searchPattern := "%" + q + "%"
+		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
+            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.name LIKE ? OR " + 
+            "color_tags.name_color LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+    // Summary (Gunakan GroupBy Nama Tag)
+    type TagSummary struct {
+        TagName    string  `json:"tag_name"`
+        TotalData  int64   `json:"total_data"`
+        TotalPrice float64 `json:"total_price"`
+    }
+
+    var summaries []TagSummary
+
+    // jalankan query summary terlebih dahulu
+    baseQuery.Session(&gorm.Session{}).
+		Select("color_tags.name_color as tag_name, COUNT(products.id) as total_data, SUM(products.price) as total_price").
+		Group("color_tags.name_color").
+		Scan(&summaries)
+
+    // Hitung grand total price dari summary
+    var totalPriceAll float64
+    for _, s := range summaries {
+        totalPriceAll += s.TotalPrice
+    }
+
+    // Paginate Data
+    type productsData struct {
+        ID          uint64  `json:"id"`
+        OldBarcodeProduct  string  `json:"old_barcode"`
+        Barcode     string  `json:"new_barcode"`
+        Name        string  `json:"name"`
+        Price       float64 `json:"price"`
+        Status      string  `json:"status"`
+        NameColor   string  `json:"name_color"`
+    }
+
+    var products []productsData
+	var totalData int64
+
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
+    // Ambil data detail
+    err := baseQuery.Session(&gorm.Session{}).
+        Select(`
+            products.id, 
+            product_olds.old_barcode_product, 
+            products.barcode, 
+            products.name, 
+            products.price, 
+            products.status, 
+            color_tags.name_color
+        `).
+        Order("products.created_at DESC").
+        Limit(limit).Offset(offset).
+        Find(&products).Error
+
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+        return
+    }
+
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+
+	baseURL := c.Request.Host + c.Request.URL.Path
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := scheme + "://" + baseURL
+
+	// pagination links
+	links := []gin.H{
+		{
+			"url":    nil,
+			"label":  "&laquo; Previous",
+			"active": false,
+		},
+	}
+
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
+
+	links = append(links, gin.H{
+		"url":    nil,
+		"label":  "Next &raquo;",
+		"active": false,
+	})
+
+	var nextPageURL interface{} = nil
+	var prevPageURL interface{} = nil
+
+	if page < lastPage {
+		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+	}
+	if page > 1 {
+		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+	}
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Product by color",
+			"resource": gin.H{
+                "total_data":           totalData,
+                "total_price_all":      totalPriceAll,
+                "tags_summary":         summaries,
+                "data":                 products,
+				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"links":          links,
+				"next_page_url":  nextPageURL,
+				"path":           fullURL,
+				"per_page":       limit,
+				"prev_page_url":  prevPageURL,
+				"to":             offset + len(products),
+				"total":          totalData,
+			},
+		},
+	})
+}
+
+func GetProductsByCategory(c *gin.Context) {
+    type ProductResult struct {
+        ID                 uint      `json:"id"`
+        SourceType         string    `json:"source_type"` // product | bundle
+        Barcode            string    `json:"barcode"`
+        Name               string    `json:"name"`
+        NameCategory       string    `json:"name_category"`
+        Price              float64   `json:"price"`
+        CreatedAt          time.Time `json:"created_at"`
+        Status             string    `json:"new_status_product"`
+        DisplayPrice       float64   `json:"display_price"`
+        OldBarcodeProduct  string    `json:"old_barcode_product"`
+        OldNameProduct     string    `json:"old_name_product"`
+        OldQuantityProduct int       `json:"old_quantity_product"`
+        OldPriceProduct    float64   `json:"old_price_product"`
+    }
+
+	q := strings.TrimSpace(c.Query("q"))
+
+	// PAGINATION
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 33
+	offset := (page - 1) * limit
+
+	// SEARCH CONDITION
+	searchCondition := ""
+	args := []interface{}{}
+
+	if q != "" {
+		searchCondition = `
+			AND (
+				name_category LIKE ?
+				OR barcode LIKE ?
+				OR name LIKE ?
+				OR status LIKE ?
+			)
+		`
+		search := "%" + q + "%"
+		args = append(args, search, search, search, search)
+	}
+
+	// UNION QUERY (DATA)
+	dataQuery := fmt.Sprintf(`
+		SELECT * FROM (
+			SELECT
+				p.id,
+                'product' AS source_type,
+				p.barcode AS barcode,
+				p.name AS name,
+				c.name_category AS name_category,
+				p.price,
+				p.created_at,
+				p.status AS status,
+				p.display_price,
+				po.old_barcode_product,
+				po.old_name_product,
+				po.old_quantity_product,
+				po.old_price_product
+			FROM products p
+			LEFT JOIN categories c ON c.id = p.category_id
+			LEFT JOIN product_olds po ON po.id = p.product_old_id
+			WHERE p.tag_color_id IS NULL
+				AND p.category_id IS NOT NULL
+				AND p.status IN ('display','expired')
+				AND p.location_type = 'main'
+				AND p.quality = 'lolos'
+				AND (p.warehouse_type IS NULL OR p.warehouse_type = 'type1')
+
+			UNION ALL
+
+			SELECT
+				b.id,
+                'bundle' AS source_type,
+				b.barcode AS barcode,
+				b.name_bundle AS name,
+				c.name_category AS name_category,
+				b.total_price_custom AS price,
+				b.created_at,
+				CASE 
+					WHEN b.status = 'not sale' THEN 'display'
+					ELSE b.status
+				END AS status,
+				b.total_price_custom AS display_price,
+				NULL,
+				NULL,
+				NULL,
+				NULL
+			FROM bundles b
+			LEFT JOIN categories c ON c.id = b.category_id
+			WHERE b.total_price_custom >= 100000
+				AND b.tag_color_id IS NULL
+				AND b.category_id IS NOT NULL
+				AND b.status != 'bundle'
+				AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
+		) x
+		WHERE 1=1
+		%s
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`, searchCondition)
+
+	argsData := append(args, limit, offset)
+
+	var results []ProductResult
+	if err := config.DB.Raw(dataQuery, argsData...).Scan(&results).Error; err != nil {
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+		return
+	}
+
+	// COUNT QUERY
+	countQuery := fmt.Sprintf(`
+        SELECT COUNT(*) FROM (
+            SELECT 
+                p.id AS id,
+                p.barcode AS barcode,
+                p.name AS name,
+                c.name_category AS name_category,
+                p.status AS status
+            FROM products p
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE p.tag_color_id IS NULL
+                AND p.category_id IS NOT NULL
+                AND p.status IN ('display','expired')
+                AND p.location_type = 'main'
+                AND p.quality = 'lolos'
+                AND (p.warehouse_type IS NULL OR p.warehouse_type = 'type1')
+
+            UNION ALL
+
+            SELECT 
+                b.id AS id,
+                b.barcode AS barcode,
+                b.name_bundle AS name,
+                c.name_category AS name_category,
+                CASE 
+                    WHEN b.status = 'not sale' THEN 'display'
+                    ELSE b.status
+                END AS status
+            FROM bundles b
+            LEFT JOIN categories c ON c.id = b.category_id
+            WHERE b.total_price_custom >= 100000
+                AND b.tag_color_id IS NULL
+                AND b.category_id IS NOT NULL
+                AND b.status != 'bundle'
+                AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
+        ) x
+        WHERE 1=1
+        %s
+    `, searchCondition)
+
+
+	var totalData int64
+	if err := config.DB.Raw(countQuery, args...).Scan(&totalData).Error; err != nil {
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+		return
+	}
+
+    // pagination links
+    lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+	links := []gin.H{
+		{
+			"url":    nil,
+			"label":  "&laquo; Previous",
+			"active": false,
+		},
+	}
+
+    scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := fmt.Sprintf("%s://%s%s", scheme, c.Request.Host, c.Request.URL.Path)
+
+
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
+
+	links = append(links, gin.H{
+		"url":    nil,
+		"label":  "Next &raquo;",
+		"active": false,
+	})
+
+	var nextPageURL, prevPageURL interface{}
+
+	if page < lastPage {
+		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+	}
+
+	if page > 1 {
+		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+	}
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "List Product by category",
+		"resource": gin.H{
+			"total":          totalData,
+			"data":           results,
+			"current_page":   page,
+			"last_page":      lastPage,
+			"per_page":       limit,
+			"next_page_url":  nextPageURL,
+            "links":           links,
+			"prev_page_url":  prevPageURL,
+		},
+	})
+}
+
+
+func UpdateProductStatus(c *gin.Context) {
+    product_id := c.Param("id")
+    result := config.DB.Model(&models.Product{}).
+        Where("id = ?", product_id).Update("status", "dump")
+
+    err := result.Error
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "failed to update product", "error": err.Error()})
+        return
+    }
+
+    if result.RowsAffected == 0 {
+        c.JSON(404, gin.H{"success": false, "message": "product not found"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "success": true,
+        "message": "Berhasil mengubah status produk menjadi dump",
+    })
+}
+
+func DeleteProductInventory(c *gin.Context) {
+    id := c.Param("id")
+    userID, _ := c.Get("user_id")
+
+    // Ambil data user
+    var user models.User
+    if err := config.DB.Select("id", "name").First(&user, userID).Error; err != nil {
+        status := http.StatusInternalServerError
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            status = http.StatusForbidden
+        }
+        c.JSON(status, gin.H{"success": false, "message": "user not found"})
+        return
+    }
+
+    // Ambil data produk (Di luar transaksi untuk efisiensi)
+    var product models.Product
+    if err := config.DB.First(&product, id).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Data tidak ditemukan"})
+        return
+    }
+
+    // 3. Mulai Transaksi
+    tx := config.DB.Begin()
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error"})
+        }
+    }()
+
+    // Proses Hapus
+    if err := tx.Delete(&product).Error; err != nil {
+        tx.Rollback() 
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal menghapus data"})
+        return
+    }
+
+    // Logging
+    metadata := map[string]interface{}{}
+    logMsg := fmt.Sprintf("%s menghapus product dengan barcode %s", user.Name, product.Barcode)
+    if err := helpers.LogUserAction(user.ID, user.Name, logMsg, "inventory/product", metadata); err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal membuat log"})
+        return
+    }
+
+    // 6. Commit
+    if err := tx.Commit().Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to commit transaction"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "success": true,
+        "message": "data berhasil di hapus",
+        "data":    product,
+    })
 }

@@ -2,6 +2,7 @@ package models
 
 import (
 	"time"
+	"fmt"
 )
 
 type Product struct {
@@ -37,3 +38,12 @@ type Product struct {
 	Rack      *Rack      `gorm:"foreignKey:RackID" json:"rack,omitempty"`
 }
 
+func (p *Product) GetDaysSinceCreated() string {
+	// Menghitung selisih waktu dari CreatedAt sampai sekarang
+	duration := time.Since(p.CreatedAt)
+	
+	// Konversi durasi ke jam lalu bagi 24 untuk dapat jumlah hari
+	days := int(duration.Hours() / 24)
+
+	return fmt.Sprintf("%d Hari", days)
+}
