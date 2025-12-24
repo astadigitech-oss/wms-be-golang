@@ -3,10 +3,12 @@ package controllers
 import (
 	"liquid8/wms/config"
 	"liquid8/wms/models"
+	"strings"
 
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 func Categories(c *gin.Context) {
@@ -17,9 +19,8 @@ func Categories(c *gin.Context) {
 	// Query Category
 	config.DB.
 		Model(&models.Category{}).
-		Where(
-			config.DB.Where("name_category LIKE ?", "%"+query+"%"),
-		).Find(&categories)
+		Where("name_category LIKE ?", "%"+query+"%").
+		Find(&categories)
 
 
 	// Response
@@ -30,19 +31,44 @@ func Categories(c *gin.Context) {
 	})
 }
 
-func AddCategory(c *gin.Context) {
-	type AddCategoryRequest struct {
-		NameCategory     string  `json:"name_category" binding:"required"`
-		DiscountCategory int `json:"discount_category" binding:"required"`
-		MaxPriceCategory float64 `json:"max_price_category" binding:"required"`
-	}
+type payloadRequest struct {
+	NameCategory     string  `json:"name_category" binding:"required"`
+	DiscountCategory int `json:"discount_category" binding:"required"`
+	MaxPriceCategory float64 `json:"max_price_category" binding:"required"`
+}
 
-	var payload AddCategoryRequest
+func AddCategory(c *gin.Context) {
+	var payload payloadRequest
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
+		validationErrors := err.(validator.ValidationErrors)
+
+		errors := make(map[string]string)
+
+		for _, e := range validationErrors {
+			field := strings.ToLower(e.Field())
+
+			switch field {
+				case "namecategory":
+					if e.Tag() == "required" {
+						errors["name_category"] = "Nama category wajib diisi"
+					}
+				case "discountcategory":
+					if e.Tag() == "required" {
+						errors["discount_category"] = "Discount category wajib diisi"
+					}
+				case "maxpricecategory":
+					if e.Tag() == "required" {
+						errors["max_price_category"] = "Max price category wajib diisi"
+					}
+			}
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
 			"status": false,
-			"error":  err.Error(),
+			"message": "Validasi gagal",
+			"errors": errors,
 		})
+		
 		return
 	}
 
@@ -71,18 +97,37 @@ func AddCategory(c *gin.Context) {
 func UpdateCategory(c *gin.Context) {
 	id := c.Param("id")
 
-	type UpdateCategoryRequest struct {
-		NameCategory     string  `json:"name_category" binding:"required"`
-		DiscountCategory int `json:"discount_category" binding:"required"`
-		MaxPriceCategory float64 `json:"max_price_category" binding:"required"`
-	}
-
-	var payload UpdateCategoryRequest
+	var payload payloadRequest
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
+		validationErrors := err.(validator.ValidationErrors)
+
+		errors := make(map[string]string)
+
+		for _, e := range validationErrors {
+			field := strings.ToLower(e.Field())
+
+			switch field {
+				case "namecategory":
+					if e.Tag() == "required" {
+						errors["name_category"] = "Nama category wajib diisi"
+					}
+				case "discountcategory":
+					if e.Tag() == "required" {
+						errors["discount_category"] = "Discount category wajib diisi"
+					}
+				case "maxpricecategory":
+					if e.Tag() == "required" {
+						errors["max_price_category"] = "Max price category wajib diisi"
+					}
+			}
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
 			"status": false,
-			"error":  err.Error(),
+			"message": "Validasi gagal",
+			"errors": errors,
 		})
+		
 		return
 	}
 

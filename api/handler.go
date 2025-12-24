@@ -75,5 +75,9 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/categories", controllers.AddCategory) //CategoryController.go
 		protected.PUT("/categories/:id", controllers.UpdateCategory) //CategoryController.go
 		protected.DELETE("/categories/:id", controllers.DeleteCategory) //CategoryController.go
+		protected.GET("/color_tags", controllers.TagColors) //ColorTagController.go
+		protected.POST("/color_tags", controllers.AddTagColor) //ColorTagController.go
+		protected.PUT("/color_tags/:id", controllers.UpdateTagColor) //ColorTagController.go
+		protected.DELETE("/color_tags/:id", controllers.DeleteTagColor) //ColorTagController.go
 	}
 }

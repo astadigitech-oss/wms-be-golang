@@ -12,6 +12,6 @@ type ColorTag struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 
-	Products []Product `gorm:"foreignKey:TagColorID" json:"products"`
-	Bundles  []Bundle  `gorm:"foreignKey:TagColorID" json:"bundles"`
+	Products []Product `gorm:"foreignKey:TagColorID" json:"products,omitempty"`
+	Bundles  []Bundle  `gorm:"foreignKey:TagColorID" json:"bundles,omitempty"`
 }

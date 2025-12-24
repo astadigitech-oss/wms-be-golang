@@ -366,7 +366,7 @@ func AddProductManual(c *gin.Context) {
 }
 
 // ============================= STAGGING =============================
-type ProductWithCategoryName struct {
+type productWithCategoryName struct {
     ID          uint      `json:"id"`
     Barcode     string    `json:"barcode"`
     Name        string    `json:"name"`
@@ -379,7 +379,7 @@ type ProductWithCategoryName struct {
     CreatedAt string   `json:"created_at"` // Harus sesuai dengan alias SELECT
 }
 
-type StagProductUpdatePayload struct {
+type stagProductUpdatePayload struct {
     CodeDocument string `json:"code_document" binding:"required"`
     NewNameProduct string `json:"new_name_product" binding:"required"`
     NewQuantityProduct int `json:"new_quantity_product" binding:"required,gt=0"`
@@ -399,7 +399,7 @@ func StaggingProduct(c *gin.Context) {
 	limit := 50
 	offset := (page - 1) * limit
 
-	var products []ProductWithCategoryName
+	var products []productWithCategoryName
 	var total int64
 
 	db := config.DB.Model(&models.Product{}).
@@ -568,7 +568,7 @@ func StaggingProductUpdate(c *gin.Context) {
     }
     productIDUint := uint(productID)
 
-    var payload StagProductUpdatePayload
+    var payload stagProductUpdatePayload
     if err := c.ShouldBindJSON(&payload); err != nil {
         c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload", "detail": err.Error()})
         return
@@ -728,7 +728,7 @@ func StaggingFilterProduct(c *gin.Context) {
 	limit := 50
 	offset := (page - 1) * limit
 
-	var products []ProductWithCategoryName
+	var products []productWithCategoryName
 	var total int64
 
 	db := config.DB.Model(&models.Product{}).
@@ -966,7 +966,7 @@ func StaggingApprovement(c *gin.Context) {
 	limit := 50
 	offset := (page - 1) * limit
 
-	var products []ProductWithCategoryName
+	var products []productWithCategoryName
 	var total int64
 
 	db := config.DB.Model(&models.Product{}).
