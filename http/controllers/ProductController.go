@@ -1557,6 +1557,22 @@ func GetProductsByCategory(c *gin.Context) {
 
 
 func UpdateProductStatus(c *gin.Context) {
+    // Definisikan struct untuk request
+    var input struct {
+        SourceType string `json:"source_type" binding:"required"`
+    }
+
+    if err := c.ShouldBindJSON(&input); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "source_type wajib diisi", "error":err.Error()})
+        return
+    }
+
+    //Cek apakah source_type adalah 'product'
+    if input.SourceType != "product" {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Hanya tipe 'product' yang diizinkan"})
+        return
+    }
+
     product_id := c.Param("id")
     result := config.DB.Model(&models.Product{}).
         Where("id = ?", product_id).Update("status", "dump")
@@ -1579,6 +1595,22 @@ func UpdateProductStatus(c *gin.Context) {
 }
 
 func DeleteProductInventory(c *gin.Context) {
+    // Definisikan struct untuk request
+    var input struct {
+        SourceType string `json:"source_type" binding:"required"`
+    }
+
+    if err := c.ShouldBindJSON(&input); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "source_type wajib diisi"})
+        return
+    }
+
+    //Cek apakah source_type adalah 'product'
+    if input.SourceType != "product" {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Hanya tipe 'product' yang diizinkan"})
+        return
+    }
+
     id := c.Param("id")
     userID, _ := c.Get("user_id")
 
