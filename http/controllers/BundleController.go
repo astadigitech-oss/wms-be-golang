@@ -159,6 +159,7 @@ func GetBundleDetail(c *gin.Context) {
 	}
 
 	type productBundle struct {
+		ID string `json:"id"`
 		CodeDocument string `json:"code_document"`
 		NewBarcode string `json:"new_barcode"`
 		NameProduct string `json:"name_product"`
@@ -170,6 +171,7 @@ func GetBundleDetail(c *gin.Context) {
 	var bundle_item []productBundle
 	if err := config.DB.Table("bundle_items").
 		Select(`
+			bundle_items.id AS id,
 			products.code_document AS code_document,
 			products.barcode AS new_barcode,
 			products.name AS name_product,
@@ -203,6 +205,7 @@ func GetBundleDetail(c *gin.Context) {
 
 func GetBundleFilterProduct(c *gin.Context) {
 	type productData struct {
+		ID string `json:"id"`
 		NewBarcode string `json:"new_barcode"`
 		ProductName string `json:"product_name"`
 	}
@@ -211,6 +214,7 @@ func GetBundleFilterProduct(c *gin.Context) {
 	if err := config.DB.Model(&models.BundleItem{}).
 		Joins("LEFT JOIN products ON products.id = bundle_items.product_id").
 		Select(`
+			bundle_items.id AS id,
 			products.name AS product_name,
 			products.barcode AS new_barcode
 		`).
@@ -1349,6 +1353,7 @@ func GetRepairBundles(c *gin.Context) {
 
 func GetRepairFilterProduct(c *gin.Context) {
 	type productData struct {
+		ID string `json:"id"`
 		NewBarcode string `json:"new_barcode"`
 		ProductName string `json:"product_name"`
 	}
@@ -1357,6 +1362,7 @@ func GetRepairFilterProduct(c *gin.Context) {
 	if err := config.DB.Model(&models.BundleItem{}).
 		Joins("LEFT JOIN products ON products.id = bundle_items.product_id").
 		Select(`
+			bundle_items.id AS id,
 			products.name AS product_name,
 			products.barcode AS new_barcode
 		`).
@@ -1375,4 +1381,106 @@ func GetRepairFilterProduct(c *gin.Context) {
 		},
 	})
 
+}
+
+func DumpProductRepair(c *gin.Context) {
+	item_id := c.Param("item_id")
+	userID, _ := c.Get("user_id")
+
+    var user models.User
+    if err := config.DB.Preload("Role").First(&user, userID).Error; err != nil {
+        c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
+        return
+    }
+
+	//start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error"})
+        }
+    }()
+
+	//cari bundle item terkait
+	var item models.BundleItem
+    if err := tx.Where("id = ?", item_id).First(&item).Error; err != nil {
+        tx.Rollback()
+        c.JSON(404, gin.H{"status": false, "message": "Bundle item tidak ditemukan"})
+        return
+    }
+
+	//cari bundle item terkait
+	var product models.Product
+    if err := tx.Where("id = ? AND status != ?", item.ProductID, "dump").First(&product).Error; err != nil {
+        tx.Rollback()
+        c.JSON(404, gin.H{"status": false, "message": "Produk item tidak ditemukan"})
+        return
+    }
+
+	//get data bundle
+	var bundle models.Bundle
+    if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&bundle, item.BundleID).Error; err != nil {
+        tx.Rollback()
+        c.JSON(404, gin.H{"status": false, "message": "Data bundle tidak ditemukan"})
+        return
+    }
+
+	newTotalPrice := bundle.TotalPrice - product.Price
+	totalProduct := bundle.TotalProduct - 1
+	if newTotalPrice < 0 { newTotalPrice = 0 }
+	if totalProduct < 0 { totalProduct = 0 }
+
+	updateData := map[string]interface{}{
+		"total_price": newTotalPrice,
+		"total_price_custom": newTotalPrice,
+		"total_product": totalProduct,
+	}
+
+	//UPDATE BUNDLE
+	if err := tx.Model(&bundle).Updates(updateData).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "error": err.Error()})
+        return
+    }
+
+	//hapus bundle item
+	if err := tx.Delete(&item).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal menghapus bundle item"})
+        return
+    }
+
+	//update status product
+	if err := tx.Model(&product).Update("status", "dump").Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal mengubah status product menjadi dump"})
+        return
+    }
+	
+	//create log action
+	action := fmt.Sprintf("Dump product[%s] repair | repar name: %s (%s)", product.Barcode, bundle.NameBundle, bundle.Barcode)
+	metadata := map[string]interface{}{}
+	if err:=helpers.LogUserAction(user.ID, user.Name, action, "/moving-product/repair", metadata); err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"status":false,"message":"gagal membuat log user action","error":err.Error()})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+    
+    c.JSON(http.StatusOK, gin.H{
+        "status":      true,
+        "message":     "Product Berhasil didump",
+    })
 }

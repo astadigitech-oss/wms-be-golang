@@ -93,5 +93,6 @@ func RouteHandler(r *gin.Engine) {
 		//Moving Product -> repair
 		protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
 		protected.GET("/repair-bundle/filter-product", controllers.GetRepairFilterProduct) //BundleController.go
+		protected.PUT("/repair-items/:item_id/dump", controllers.DumpProductRepair) //BundleController.go
 	}
 }
