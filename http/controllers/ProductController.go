@@ -68,7 +68,7 @@ func ProductApprove(c *gin.Context) {
         }
     }
 
-    // GO ROUTINE 1: PARALLEL READ (RiwayatCheck & Discrepancy Count)
+    // PARALLEL READ (RiwayatCheck & Discrepancy Count)
     wg.Add(1)
     go func() {
         defer wg.Done()
@@ -121,8 +121,11 @@ func ProductApprove(c *gin.Context) {
         }
     
         // generate barcode
-        customeBarcode := document.CustomBarcode
-        barcode, err := helpers.GenerateUniqueBarcode(config.DB, userIDUint, *customeBarcode)
+        customeBarcode := ""
+        if document.CustomBarcode != nil {
+            customeBarcode = *document.CustomBarcode
+        }
+        barcode, err := helpers.GenerateUniqueBarcode(config.DB, userIDUint, customeBarcode)
         if err != nil {
             errChan <- helpers.NewCustomError(http.StatusInternalServerError, "failed to generate barcode", err)
             return
@@ -155,12 +158,13 @@ func ProductApprove(c *gin.Context) {
             }
             discount := old.OldPriceProduct * (float64(category.DiscountCategory)/100.0)
             discount = math.Round(discount)
+            if discount > category.MaxPriceCategory {
+                discount = category.MaxPriceCategory
+            } 
             newProduct.Discount = &discount
             newProduct.Price = old.OldPriceProduct - discount
-            if discount > category.MaxPriceCategory {
-                 newProduct.Price = category.MaxPriceCategory
-            } 
             newProduct.CategoryID = payload.CategoryID
+            newProduct.TagColorID = nil
         } else {
             var color_tag models.ColorTag
             if err := config.DB.Where("id = ?", payload.TagColorID).First(&color_tag).Error; err != nil {
@@ -171,12 +175,13 @@ func ProductApprove(c *gin.Context) {
                 }
                 return
             }
-            if !(color_tag.MinPriceColor <= old.OldPriceProduct && old.OldPriceProduct <= color_tag.MaxPriceColor) {
+            if (old.OldPriceProduct < color_tag.MinPriceColor || old.OldPriceProduct > color_tag.MaxPriceColor) {
                 errChan <- helpers.NewCustomError(http.StatusBadRequest, "data color tag tidak sesuai dengan harga produk", errors.New("price not in range of color tag"))
                 return
             }
             newProduct.Price = color_tag.FixedPriceColor
             newProduct.TagColorID = payload.TagColorID
+            newProduct.CategoryID = nil
         }
         
         newProduct.DisplayPrice = newProduct.Price
@@ -1129,7 +1134,7 @@ func StaggingApprovesStore(c *gin.Context) {
 	})
 }
 
-// ============================= IVENTORY PRODUCT =============================
+// ============================= INVENTORY PRODUCT =============================
 //Product
 func GetProductsByColor(c *gin.Context) {
     q := strings.TrimSpace(c.Query("q"))
@@ -1555,6 +1560,162 @@ func GetProductsByCategory(c *gin.Context) {
 	})
 }
 
+func GetProductsStatusDisplayExpired(c *gin.Context) {
+    q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	//inisialisasi query
+	baseQuery := config.DB.Model(&models.Product{}).
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+        Where("products.status IN ?", []string{"display", "expired"}).
+        Where("products.location_type = ?", "main").
+        Where("products.quality = ?", "lolos").
+        Where("(products.warehouse_type IS NULL OR products.warehouse_type = 'type1')")
+
+	// Searching (misalnya, mencari berdasarkan nama atau email)
+	if q != "" {
+		searchPattern := "%" + q + "%"
+		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
+            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.name LIKE ? OR " + 
+            "products.code_document LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+    // Paginate Data
+    type productsData struct {
+        ID          uint64  `json:"id"`
+        OldBarcode  string  `json:"old_barcode"`
+        NewBarcode     string  `json:"new_barcode"`
+        Name        string  `json:"name"`
+        Price       float64 `json:"price"`
+        OldPrice       float64 `json:"old_price"`
+        Status      string  `json:"status"`
+        Category   *string  `json:"category"`
+    }
+
+    var products []productsData
+	var totalData int64
+
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
+    // Ambil data detail
+    err := baseQuery.Session(&gorm.Session{}).
+        Select(`
+            products.id, 
+            product_olds.old_barcode_product AS old_barcode, 
+            products.barcode AS new_barcode, 
+            products.name AS name, 
+            products.price AS price, 
+            product_olds.old_price_product AS old_price, 
+            products.status AS status, 
+            COALESCE(color_tags.name_color, categories.name_category) AS category
+        `).
+        Order("products.created_at DESC").
+        Limit(limit).Offset(offset).
+        Find(&products).Error
+
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+        return
+    }
+
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+
+	baseURL := c.Request.Host + c.Request.URL.Path
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := scheme + "://" + baseURL
+
+	// pagination links
+	links := []gin.H{
+		{
+			"url":    nil,
+			"label":  "&laquo; Previous",
+			"active": false,
+		},
+	}
+
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
+
+	links = append(links, gin.H{
+		"url":    nil,
+		"label":  "Next &raquo;",
+		"active": false,
+	})
+
+	var nextPageURL interface{} = nil
+	var prevPageURL interface{} = nil
+
+	if page < lastPage {
+		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+	}
+	if page > 1 {
+		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+	}
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Product Display & Expired",
+			"resource": gin.H{
+                "total_data":           totalData,
+                "data":                 products,
+				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"links":          links,
+				"next_page_url":  nextPageURL,
+				"per_page":       limit,
+				"prev_page_url":  prevPageURL,
+				"to":             offset + len(products),
+				"total":          totalData,
+			},
+		},
+	})
+}
 
 func UpdateProductStatus(c *gin.Context) {
     // Definisikan struct untuk request

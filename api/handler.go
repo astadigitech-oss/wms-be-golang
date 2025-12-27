@@ -39,11 +39,9 @@ func RouteHandler(r *gin.Engine) {
 		protected.DELETE("/documents/:code", controllers.DestroyDocument) // DocumentController.go
 		protected.DELETE("/documents/product_old/:id", controllers.DestroyProductOld) // DocumentController.go
 		protected.POST("/product-approve/:product_old_id", controllers.ProductApprove) // ProductController.go
-
 		//Riwayat Check Routes
 		protected.GET("/check-histories", controllers.CheckHistories); //DocumentController.go
 		protected.GET("/check-histories/:history_id", controllers.DetailHistory); //DocumentController.go
-
 		// Manual Inbound
 		protected.POST("/products/manual", controllers.AddProductManual); //ProductController.go
 
@@ -57,7 +55,6 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/stagging/move-to-lpr/:product_id", controllers.StaggingMoveToLPR) // ProductController.go
 		protected.POST("/stagging-products", controllers.StaggingFilterApprove) // ProductController.go
 		protected.DELETE("/stagging/filter-products/:product_id", controllers.DestroyFilterProduct) // ProductController.go
-
 		// approvement stagging
 		protected.GET("/stagging-approves", controllers.StaggingApprovement) // ProductController.go
 		protected.POST("/stagging-approves", controllers.StaggingApprovesStore) // ProductController.go
@@ -67,9 +64,9 @@ func RouteHandler(r *gin.Engine) {
 		//Product
 		protected.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
 		protected.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
+		protected.GET("/products/status/display-expired", controllers.GetProductsStatusDisplayExpired) // ProductController.go
 		protected.PUT("/products/:id/status-dump", controllers.UpdateProductStatus) // ProductController.go
 		protected.DELETE("/products/inventory/:id", controllers.DeleteProductInventory) // ProductController.go
-
 		//category Setting
 		protected.GET("/categories", controllers.Categories) //CategoryController.go
 		protected.POST("/categories", controllers.AddCategory) //CategoryController.go
@@ -79,5 +76,22 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/color_tags", controllers.AddTagColor) //ColorTagController.go
 		protected.PUT("/color_tags/:id", controllers.UpdateTagColor) //ColorTagController.go
 		protected.DELETE("/color_tags/:id", controllers.DeleteTagColor) //ColorTagController.go
+
+		//Moving Product -> bundle
+		protected.GET("/bundles", controllers.GetBundles) //BundleController.go
+		protected.GET("/bundle/filter-product", controllers.GetBundleFilterProduct) //BundleController.go
+		
+		protected.GET("/bundles/:bundle_id/detail", controllers.GetBundleDetail) //BundleController.go 
+		protected.POST("/bundle/:bundle_id/product-bundle/:product_id", controllers.AddProductBundle) //BundleController.go 
+		protected.POST("/bundles", controllers.CreateBundleProduct) //BundleController.go
+		protected.POST("/bundle/filter-product/:id", controllers.BundleAddFilterProduct) //BundleController.go
+		protected.PUT("/bundles/:bundle_id", controllers.UpdateBundle) //BundleController.go
+		protected.DELETE("/bundle/:bundle_id/product-bundle/:product_id", controllers.DeleteProductBundle) //BundleController.go
+		protected.DELETE("/bundles/:bundle_id", controllers.Unbundle) //BundleController.go
+		protected.DELETE("/bundle/filter-product/:id", controllers.BundleDeleteFilterProduct) //BundleController.go
+		
+		//Moving Product -> repair
+		protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
+		protected.GET("/repair-bundle/filter-product", controllers.GetRepairFilterProduct) //BundleController.go
 	}
 }
