@@ -96,5 +96,13 @@ func RouteHandler(r *gin.Engine) {
 		//Slow Moving Product -> promo
 		protected.GET("/promos", controllers.GetPromos) // ProductController.go
 		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
+
+		/* ==================== Account ==================== */
+		//Account Setting
+		protected.GET("/users", controllers.GetUsers) //UserController.go
+		protected.GET("/roles", controllers.GetRoles) //UserController.go
+		protected.POST("/users", controllers.CreateUser) //UserController.go
+		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
+		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
 	}
 }

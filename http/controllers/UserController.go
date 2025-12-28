@@ -232,11 +232,14 @@ func CreateUser(c *gin.Context) {
 	// VALIDASI REQUEST
 	// =========================
 	if err := c.ShouldBindJSON(&req); err != nil {
-		validationErrors := err.(validator.ValidationErrors)
-
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+			return
+		}
 		errors := make(map[string]string)
 
-		for _, e := range validationErrors {
+		for _, e := range ve {
 			field := strings.ToLower(e.Field())
 
 			switch field {
