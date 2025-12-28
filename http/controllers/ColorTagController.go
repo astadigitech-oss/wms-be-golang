@@ -39,11 +39,13 @@ type tagColorRequest struct {
 func AddTagColor(c *gin.Context) {
 	var payload tagColorRequest
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		validationErrors := err.(validator.ValidationErrors)
-
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+			return
+		}
 		errors := make(map[string]string)
-
-		for _, e := range validationErrors {
+		for _, e := range ve {
 			field := e.Field()
 
 			switch field {
@@ -108,13 +110,14 @@ func UpdateTagColor(c *gin.Context) {
 
 	var payload tagColorRequest
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		validationErrors := err.(validator.ValidationErrors)
-
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+			return
+		}
 		errors := make(map[string]string)
-
-		for _, e := range validationErrors {
+		for _, e := range ve {
 			field := e.Field()
-
 			switch field {
 				case "HexaCodeColor":
 					if e.Tag() == "required" {
