@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+    "github.com/go-playground/validator/v10"
 )
 
 type RiwayatCheckUpdateData struct {
@@ -470,13 +471,39 @@ func StaggingProduct(c *gin.Context) {
 		},
 	}
 
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
 
 	links = append(links, gin.H{
 		"url":    nil,
@@ -488,10 +515,10 @@ func StaggingProduct(c *gin.Context) {
 	var prevPageURL interface{} = nil
 
 	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1,q)
 	}
 	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1,q)
 	}
 
 	// FINAL RESPONSE
@@ -502,10 +529,10 @@ func StaggingProduct(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL,q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
 				"next_page_url":  nextPageURL,
 				"path":           fullURL,
@@ -799,13 +826,39 @@ func StaggingFilterProduct(c *gin.Context) {
 		},
 	}
 
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
 
 	links = append(links, gin.H{
 		"url":    nil,
@@ -817,10 +870,10 @@ func StaggingFilterProduct(c *gin.Context) {
 	var prevPageURL interface{} = nil
 
 	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
 	}
 	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
 	}
 
 	// FINAL RESPONSE
@@ -831,10 +884,10 @@ func StaggingFilterProduct(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
 				"next_page_url":  nextPageURL,
 				"path":           fullURL,
@@ -1036,13 +1089,39 @@ func StaggingApprovement(c *gin.Context) {
 		},
 	}
 
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
 
 	links = append(links, gin.H{
 		"url":    nil,
@@ -1054,10 +1133,10 @@ func StaggingApprovement(c *gin.Context) {
 	var prevPageURL interface{} = nil
 
 	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
 	}
 	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
 	}
 
 	// FINAL RESPONSE
@@ -1068,10 +1147,10 @@ func StaggingApprovement(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
 				"next_page_url":  nextPageURL,
 				"path":           fullURL,
@@ -1246,7 +1325,7 @@ func GetProductsByColor(c *gin.Context) {
         // Jika total halaman 10 atau kurang, tampilkan semua
         for i := 1; i <= lastPage; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1254,7 +1333,7 @@ func GetProductsByColor(c *gin.Context) {
     } else {
         for i := 1; i <= 8; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1269,7 +1348,7 @@ func GetProductsByColor(c *gin.Context) {
 
         for i := lastPage - 1; i <= lastPage; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1286,10 +1365,10 @@ func GetProductsByColor(c *gin.Context) {
 	var prevPageURL interface{} = nil
 
 	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
 	}
 	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
 	}
 
 	c.JSON(200, gin.H{
@@ -1301,10 +1380,10 @@ func GetProductsByColor(c *gin.Context) {
                 "total_price_all":      totalPriceAll,
                 "tags_summary":         summaries,
                 "data":                 products,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
 				"next_page_url":  nextPageURL,
 				"path":           fullURL,
@@ -1498,7 +1577,7 @@ func GetProductsByCategory(c *gin.Context) {
         // Jika total halaman 10 atau kurang, tampilkan semua
         for i := 1; i <= lastPage; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1506,7 +1585,7 @@ func GetProductsByCategory(c *gin.Context) {
     } else {
         for i := 1; i <= 8; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1521,7 +1600,7 @@ func GetProductsByCategory(c *gin.Context) {
 
         for i := lastPage - 1; i <= lastPage; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1537,11 +1616,11 @@ func GetProductsByCategory(c *gin.Context) {
 	var nextPageURL, prevPageURL interface{}
 
 	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
 	}
 
 	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
 	}
 
 	c.JSON(200, gin.H{
@@ -1649,7 +1728,7 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
         // Jika total halaman 10 atau kurang, tampilkan semua
         for i := 1; i <= lastPage; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1657,7 +1736,7 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
     } else {
         for i := 1; i <= 8; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1672,7 +1751,7 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
 
         for i := lastPage - 1; i <= lastPage; i++ {
             links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d", fullURL, i),
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
                 "label":  strconv.Itoa(i),
                 "active": i == page,
             })
@@ -1831,4 +1910,280 @@ func DeleteProductInventory(c *gin.Context) {
         "message": "data berhasil di hapus",
         "data":    product,
     })
+}
+
+//Slow Moving Product -> Promo
+func GetPromos(c *gin.Context) {
+    q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	//inisialisasi query
+	baseQuery := config.DB.Model(&models.Promo{}).
+        Joins("LEFT JOIN products ON products.id = promos.product_id").
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id")
+
+	// Searching (misalnya, mencari berdasarkan nama atau email)
+	if q != "" {
+		searchPattern := "%" + q + "%"
+		baseQuery = baseQuery.Where("(promos.name_promo LIKE ? OR "+
+            "products.barcode LIKE ? OR " + 
+            "product_olds.old_barcode_product LIKE ? OR " + 
+            "categories.name_category LIKE ? OR " + 
+            "color_tags.name_color LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+    type dataPromo struct {
+        ID           uint64     `json:"id"`
+        ProductID    uint64     `json:"product_id"`
+        NamePromo    string    `json:"name_promo"`
+        DiscountPromo float64  `json:"discount_promo"`
+        PricePromo   float64   `json:"price_promo"`
+        ProductName string `json:"product_name"`
+        ProductNewBarcode string `json:"product_new_barcode"`
+        ProductOldBarcode string `json:"product_old_barcode"`
+        ProductCategory string `json:"product_category"`
+        ProductQuantity int64 `json:"product_quantity"`
+        ProductOldPrice float64 `json:"product_old_price"`
+        ProductNewPrice float64 `json:"product_new_price"`
+        ProductStatus string `json:"product_status"`
+    }
+
+    var promos []dataPromo
+	var totalData int64
+
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
+    // Ambil data detail
+    err := baseQuery.Session(&gorm.Session{}).
+        Select(`
+            promos.id AS id, 
+            promos.product_id AS product_id, 
+            promos.name_promo AS name_promo, 
+            promos.discount_promo AS discount_promo, 
+            promos.price_promo AS price_promo,
+            products.name AS product_name, 
+            products.barcode AS product_new_barcode,
+            product_olds.old_barcode_product AS product_old_barcode, 
+            COALESCE(color_tags.name_color, categories.name_category) AS product_category,
+            products.quantity AS product_quantity, 
+            product_olds.old_price_product AS product_old_price, 
+            products.price AS product_new_price, 
+            products.status AS product_status
+        `).
+        Order("promos.created_at DESC").
+        Limit(limit).Offset(offset).
+        Find(&promos).Error
+
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+        return
+    }
+
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+
+	baseURL := c.Request.Host + c.Request.URL.Path
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := scheme + "://" + baseURL
+
+	// pagination links
+	links := []gin.H{
+		{
+			"url":    nil,
+			"label":  "&laquo; Previous",
+			"active": false,
+		},
+	}
+
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
+
+	links = append(links, gin.H{
+		"url":    nil,
+		"label":  "Next &raquo;",
+		"active": false,
+	})
+
+	var nextPageURL interface{} = nil
+	var prevPageURL interface{} = nil
+
+	if page < lastPage {
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
+	}
+	if page > 1 {
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
+	}
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Promo",
+			"resource": gin.H{
+                "total_data":           totalData,
+                "data":                 promos,
+				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
+				"links":          links,
+				"next_page_url":  nextPageURL,
+				"path":           fullURL,
+				"per_page":       limit,
+				"prev_page_url":  prevPageURL,
+				"to":             offset + int(totalData),
+			},
+		},
+	})
+}
+
+func AddPromoProduct(c *gin.Context) {
+    type payloadRequest struct {
+        NamePromo     string  `json:"name_promo" binding:"required"`
+        DiscountPromo float64 `json:"discount_promo" binding:"required,min=0,max=100"`
+        ProductID   int64 `json:"product_id" binding:"required"`
+    }
+
+    var payload payloadRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+			return
+		}
+		errors := make(map[string]string)
+		for _, e := range ve {
+			field := strings.ToLower(e.Field())
+
+			switch field {
+				case "namepromo":
+					if e.Tag() == "required" {
+						errors["name_promo"] = "Nama promo wajib diisi"
+					}
+				case "discountpromo":
+					if e.Tag() == "required" {
+						errors["discount_promo"] = "Discount promo wajib diisi"
+					}else if e.Tag() == "min" {
+                        errors["discount_promo"] = "Diskon tidak boleh negatif"
+                    } else if e.Tag() == "max" {
+                        errors["discount_promo"] = "Diskon tidak boleh lebih dari 100%"
+                    }
+				case "productid":
+					if e.Tag() == "required" {
+						errors["product_id"] = "Product id wajib diisi"
+					}
+			}
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"message": "Validasi gagal",
+			"errors": errors,
+		})
+		
+		return
+	}
+
+    //start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error"})
+        }
+    }()
+
+    // Cari produk untuk mendapatkan harga asli
+	var product models.Product
+	if err := tx.Where("status IN ?", []string{"display", "expired"}).First(&product, payload.ProductID).Error; err != nil {
+        tx.Rollback()
+		c.JSON(404, gin.H{"status": false, "message": "Produk tidak ditemukan"})
+		return
+	}
+
+    // Hitung harga setelah promo
+	// Rumus: Harga - (Harga * (Diskon / 100))
+	pricePromo := product.Price - (product.Price * (payload.DiscountPromo / 100))
+
+    promo := models.Promo{
+        NamePromo: payload.NamePromo,
+        DiscountPromo: payload.DiscountPromo,
+        ProductID: uint64(payload.ProductID),
+        PricePromo: pricePromo,
+    }
+
+    //create promo
+    if err := tx.Create(&promo).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+		return
+	}
+
+    //update product status
+	if err := tx.Model(&product).Update("status", "promo").Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "failed to update status product",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+    if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+		"status":   true,
+		"message":  "berhasil membuat promo product",
+	})
 }

@@ -76,11 +76,10 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/color_tags", controllers.AddTagColor) //ColorTagController.go
 		protected.PUT("/color_tags/:id", controllers.UpdateTagColor) //ColorTagController.go
 		protected.DELETE("/color_tags/:id", controllers.DeleteTagColor) //ColorTagController.go
-
 		//Moving Product -> bundle
 		protected.GET("/bundles", controllers.GetBundles) //BundleController.go
 		protected.GET("/bundle/filter-product", controllers.GetBundleFilterProduct) //BundleController.go
-		
+		//====================
 		protected.GET("/bundles/:bundle_id/detail", controllers.GetBundleDetail) //BundleController.go 
 		protected.POST("/bundle/:bundle_id/product-bundle/:product_id", controllers.AddProductBundle) //BundleController.go 
 		protected.POST("/bundles", controllers.CreateBundleProduct) //BundleController.go
@@ -89,10 +88,13 @@ func RouteHandler(r *gin.Engine) {
 		protected.DELETE("/bundle/:bundle_id/product-bundle/:product_id", controllers.DeleteProductBundle) //BundleController.go
 		protected.DELETE("/bundles/:bundle_id", controllers.Unbundle) //BundleController.go
 		protected.DELETE("/bundle/filter-product/:id", controllers.BundleDeleteFilterProduct) //BundleController.go
-		
+		//====================
 		//Moving Product -> repair
 		protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
 		protected.GET("/repair-bundle/filter-product", controllers.GetRepairFilterProduct) //BundleController.go
 		protected.PUT("/repair-items/:item_id/dump", controllers.DumpProductRepair) //BundleController.go
+		//Slow Moving Product -> promo
+		protected.GET("/promos", controllers.GetPromos) // ProductController.go
+		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
 	}
 }

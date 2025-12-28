@@ -17,5 +17,5 @@ type ProductOld struct {
 
 	// Relations
 	// Document	 *Document `gorm:"foreignKey:CodeDocument;references:Code" json:"document,omitempty"`
-	Product        *Product `gorm:"foreignKey:ProductOldID;references:ID" json:"products,omitempty"`
+	Product        *Product `gorm:"foreignKey:ProductOldID;references:ID" json:"product,omitempty"`
 }
