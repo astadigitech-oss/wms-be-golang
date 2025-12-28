@@ -127,13 +127,39 @@ func GetUsers(c *gin.Context) {
 		},
 	}
 
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
+	if lastPage <= 8 {
+        // Jika total halaman 10 atau kurang, tampilkan semua
+        for i := 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    } else {
+        for i := 1; i <= 8; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+
+        // Tambahkan separator "..."
+        links = append(links, gin.H{
+            "url":    nil,
+            "label":  "...",
+            "active": false,
+        })
+
+        for i := lastPage - 1; i <= lastPage; i++ {
+            links = append(links, gin.H{
+                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
+                "label":  strconv.Itoa(i),
+                "active": i == page,
+            })
+        }
+    }
 
 	links = append(links, gin.H{
 		"url":    nil,
@@ -145,10 +171,10 @@ func GetUsers(c *gin.Context) {
 	var prevPageURL interface{} = nil
 
 	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
+		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
 	}
 	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
+		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
 	}
 
 	c.JSON(200, gin.H{
@@ -158,10 +184,10 @@ func GetUsers(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           result,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
+				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
+				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
 				"next_page_url":  nextPageURL,
 				"path":           fullURL,
