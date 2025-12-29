@@ -65,7 +65,7 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
 		protected.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
 		protected.GET("/products/status/display-expired", controllers.GetProductsStatusDisplayExpired) // ProductController.go
-		protected.PUT("/products/:id/status-dump", controllers.UpdateProductStatus) // ProductController.go
+		protected.PUT("/products/:barcode/status-dump", controllers.ProductToDump) // ProductController.go
 		protected.DELETE("/products/inventory/:id", controllers.DeleteProductInventory) // ProductController.go
 		//category Setting
 		protected.GET("/categories", controllers.Categories) //CategoryController.go
@@ -96,8 +96,17 @@ func RouteHandler(r *gin.Engine) {
 		//Slow Moving Product -> promo
 		protected.GET("/promos", controllers.GetPromos) // ProductController.go
 		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
+		//Stock Opname -> color
+		
+		/* ==================== REPAIR STATION ==================== */
+		//Migrate To Repair
+		//Abnormal
+		protected.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
+		protected.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
+		//Damaged
+		protected.GET("/products/damage", controllers.GetProductDamaged) //ProductController.go
 
-		/* ==================== Account ==================== */
+		/* ==================== ACCOUNT ==================== */
 		//Account Setting
 		protected.GET("/users", controllers.GetUsers) //UserController.go
 		protected.GET("/roles", controllers.GetRoles) //UserController.go
