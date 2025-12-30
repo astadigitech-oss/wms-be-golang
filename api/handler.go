@@ -29,7 +29,8 @@ func RouteHandler(r *gin.Engine) {
 		/* ==================== Inbound Routes ==================== */
 		protected.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go
 		protected.POST("/generate/merge-headers", controllers.MapAndMergeHeaders) //GenerateController.go
-		
+		//Bulking Product
+		protected.POST("bulking/product/category", controllers.ImportBulkingCategory) //BulkingController.go
 		// Manifest Inbound Routes
 		protected.GET("/documents", controllers.IndexDocuments) // DocumentController.go
 		protected.GET("/documents/:code/detail", controllers.DetailDocument) // DocumentController.go

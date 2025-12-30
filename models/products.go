@@ -10,7 +10,7 @@ type Product struct {
 	CodeDocument  string      `gorm:"size:255;index" json:"code_document"`
 	RackID  	  *uint64     `json:"rack_id"`
 	ProductOldID  uint64     `gorm:"uniqueIndex;not null" json:"product_old_id"`
-	Barcode       string     `gorm:"size:255;index;not null" json:"barcode"`
+	Barcode       string     `gorm:"size:255;uniqueIndex;not null" json:"barcode"`
 	Name          string     `gorm:"size:255;not null" json:"name"`
 	Quantity      int64      `gorm:"not null" json:"quantity"`
 	Price         float64    `gorm:"type:decimal(18,2); not null" json:"price"`

@@ -155,6 +155,59 @@ func GenerateUniqueBarcode(db *gorm.DB, userID uint, custome_barcode string) (st
 	return "", errors.New("failed to generate unique barcode after max retries")
 }
 
+func GenerateCodeDocument(db *gorm.DB) (string, error) {
+	const (
+		charset  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		length   = 4
+		maxRetry = 10
+	)
+
+	now := time.Now()
+	datePart := fmt.Sprintf("%02d%02d", now.Day(), int(now.Month()))
+
+	//ambil MAX(id)
+	// var nextID int64
+	// err := db.Model(&models.Product{}).
+	// 	Select("COALESCE(MAX(id), 0) + 1").
+	// 	Scan(&nextID).Error
+	// if err != nil {
+	// 	return "", err
+	// }
+
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+
+		// --- generate random alphanumeric ---
+		random := make([]byte, length)
+		for i := range random {
+			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+			random[i] = charset[n.Int64()]
+		}
+
+		barcode := fmt.Sprintf("DOC%s%s", datePart, string(random))
+
+		// --- cek apakah barcode sudah ada di DB ---
+		var count int64
+		err := db.
+			WithContext(context.Background()).
+			Model(&models.Product{}).
+			Where("barcode = ?", barcode).
+			Count(&count).
+			Error
+
+		if err != nil {
+			return "", err
+		}
+
+		// --- jika belum digunakan, selesai ---
+		if count == 0 {
+			return barcode, nil
+		}
+	}
+
+	// --- jika gagal setelah banyak percobaan ---
+	return "", errors.New("failed to generate unique barcode after max retries")
+}
+
 func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	const (
 		charset  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

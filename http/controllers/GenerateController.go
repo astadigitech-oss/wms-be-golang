@@ -158,15 +158,13 @@ func worker(code_document string, headers []string, ch <-chan []string, wg *sync
 }
 
 func createDocument(fileName string, colCount, rowCount int) (string, error) {
-    var last models.Document
-
-    // Ambil ID terakhir
-    config.DB.Order("id DESC").First(&last)
-
-	newID := last.ID + 1
     now := time.Now()
 
-    code := fmt.Sprintf("DOC%04d%02d%d", newID, now.Month(), now.Year())
+    code, err := helpers.GenerateCodeDocument(config.DB)
+
+    if err != nil {
+        return "", err
+    }
 
     doc := models.Document{
         Code:                code,
