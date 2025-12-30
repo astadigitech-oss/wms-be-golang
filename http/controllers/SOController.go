@@ -60,71 +60,8 @@ func GetSummarySoColors(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -133,15 +70,10 @@ func GetSummarySoColors(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           summary_so_colors,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + int(totalData),
 				"total":          totalData,
 			},

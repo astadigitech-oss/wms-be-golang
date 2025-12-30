@@ -65,45 +65,8 @@ func IndexDocuments(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -113,15 +76,10 @@ func IndexDocuments(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           documents,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(documents),
 				"total":          total,
 			},
@@ -175,46 +133,8 @@ func DetailDocument(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
-	}
-
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, query)
 
 	// Ambil document berdasarkan code_document
 	var document models.Document
@@ -241,15 +161,10 @@ func DetailDocument(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":  page,
 				"data":  productOlds,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(productOlds),
 				"total":          total,
 			},
@@ -615,46 +530,8 @@ func CheckHistories(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
-	}
-
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -663,15 +540,10 @@ func CheckHistories(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           riwayatChecks,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(riwayatChecks),
 				"total":          total,
 			},
@@ -721,45 +593,8 @@ func DetailHistory(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	for i := 1; i <= lastPage; i++ {
-		links = append(links, gin.H{
-			"url":    fmt.Sprintf("%s?page=%d", fullURL, i),
-			"label":  strconv.Itoa(i),
-			"active": i == page,
-		})
-	}
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d", fullURL, page+1)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d", fullURL, page-1)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -769,15 +604,10 @@ func DetailHistory(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           riwayatChecks,
-				"first_page_url": fmt.Sprintf("%s?page=1", fullURL),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d", fullURL, lastPage),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(riwayatChecks),
 				"total":          total,
 			},

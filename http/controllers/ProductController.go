@@ -451,72 +451,8 @@ func StaggingProduct(c *gin.Context) {
 	}
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
-
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1,q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1,q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -526,15 +462,10 @@ func StaggingProduct(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL,q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(products),
 				"total":          total,
 			},
@@ -897,72 +828,8 @@ func StaggingFilterProduct(c *gin.Context) {
 	}
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
-
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -972,15 +839,10 @@ func StaggingFilterProduct(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(products),
 				"total":          total,
 			},
@@ -1160,72 +1022,8 @@ func StaggingApprovement(c *gin.Context) {
 	}
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
-
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -1235,16 +1033,11 @@ func StaggingApprovement(c *gin.Context) {
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
-				"to":             offset + len(products),
+				"to":             offset + int(total),
 				"total":          total,
 			},
 		},
@@ -1392,72 +1185,8 @@ func GetProductsByColor(c *gin.Context) {
     }
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
-
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -1468,16 +1197,11 @@ func GetProductsByColor(c *gin.Context) {
                 "total_price_all":      totalPriceAll,
                 "tags_summary":         summaries,
                 "data":                 products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
-				"to":             offset + len(products),
+				"to":             offset + int(totalData),
 				"total":          totalData,
 			},
 		},
@@ -1646,70 +1370,7 @@ func GetProductsByCategory(c *gin.Context) {
 
     // pagination links
     lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-    scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := fmt.Sprintf("%s://%s%s", scheme, c.Request.Host, c.Request.URL.Path)
-
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL, prevPageURL interface{}
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"status":  true,
@@ -1720,9 +1381,7 @@ func GetProductsByCategory(c *gin.Context) {
 			"current_page":   page,
 			"last_page":      lastPage,
 			"per_page":       limit,
-			"next_page_url":  nextPageURL,
             "links":           links,
-			"prev_page_url":  prevPageURL,
 		},
 	})
 }
@@ -1795,72 +1454,8 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
     }
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
-
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -1869,14 +1464,10 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
 			"resource": gin.H{
                 "total_data":           totalData,
                 "data":                 products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(products),
 				"total":          totalData,
 			},
@@ -2077,71 +1668,8 @@ func GetPromos(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1, q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -2150,15 +1678,10 @@ func GetPromos(c *gin.Context) {
 			"resource": gin.H{
                 "total_data":           totalData,
                 "data":                 promos,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
-				"path":           fullURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + int(totalData),
 			},
 		},
@@ -2363,71 +1886,8 @@ func GetProductAbnormal(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1,q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -2436,14 +1896,10 @@ func GetProductAbnormal(c *gin.Context) {
 			"resource": gin.H{
                 "total_data":           totalData,
                 "data":                 products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
 				"to":             offset + len(products),
 				"total":          totalData,
 			},
@@ -2718,71 +2174,8 @@ func GetProductDamaged(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
-	baseURL := c.Request.Host + c.Request.URL.Path
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	fullURL := scheme + "://" + baseURL
-
 	// pagination links
-	links := []gin.H{
-		{
-			"url":    nil,
-			"label":  "&laquo; Previous",
-			"active": false,
-		},
-	}
-
-	if lastPage <= 8 {
-        // Jika total halaman 10 atau kurang, tampilkan semua
-        for i := 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    } else {
-        for i := 1; i <= 8; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-
-        // Tambahkan separator "..."
-        links = append(links, gin.H{
-            "url":    nil,
-            "label":  "...",
-            "active": false,
-        })
-
-        for i := lastPage - 1; i <= lastPage; i++ {
-            links = append(links, gin.H{
-                "url":    fmt.Sprintf("%s?page=%d&q=%s", fullURL, i, q),
-                "label":  strconv.Itoa(i),
-                "active": i == page,
-            })
-        }
-    }
-
-	links = append(links, gin.H{
-		"url":    nil,
-		"label":  "Next &raquo;",
-		"active": false,
-	})
-
-	var nextPageURL interface{} = nil
-	var prevPageURL interface{} = nil
-
-	if page < lastPage {
-		nextPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page+1, q)
-	}
-	if page > 1 {
-		prevPageURL = fmt.Sprintf("%s?page=%d&q=%s", fullURL, page-1,q)
-	}
+	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -2791,15 +2184,11 @@ func GetProductDamaged(c *gin.Context) {
 			"resource": gin.H{
                 "total_data":           totalData,
                 "data":                 products,
-				"first_page_url": fmt.Sprintf("%s?page=1&q=%s", fullURL, q),
 				"from":           offset + 1,
 				"last_page":      lastPage,
-				"last_page_url":  fmt.Sprintf("%s?page=%d&q=%s", fullURL, lastPage, q),
 				"links":          links,
-				"next_page_url":  nextPageURL,
 				"per_page":       limit,
-				"prev_page_url":  prevPageURL,
-				"to":             offset + len(products),
+				"to":             offset + int(totalData),
 				"total":          totalData,
 			},
 		},
