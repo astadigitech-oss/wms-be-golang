@@ -3,17 +3,19 @@ package helpers
 import (
 	"liquid8/wms/config"
 	"liquid8/wms/models"
+	"net/url"
 
-	"time"
-	"strings"
-	"strconv"
-	"fmt"
-	"crypto/rand"
-	"math/big"
 	"context"
-	"errors"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"math/big"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -292,4 +294,105 @@ func GetToday() string {
 	)
 
 	return startOfDayInJakarta.Format("2006-01-02")
+}
+
+func BuildPaginationLinks(
+	c *gin.Context,
+	currentPage int,
+	lastPage int,
+	q string,
+) []gin.H {
+
+	links := []gin.H{}
+
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	baseURL := fmt.Sprintf(
+		"%s://%s%s",
+		scheme,
+		c.Request.Host,
+		c.Request.URL.Path,
+	)
+
+	buildURL := func(page int) string {
+		params := url.Values{}
+		params.Set("page", strconv.Itoa(page))
+		if q != "" {
+			params.Set("q", q)
+		}
+		return baseURL + "?" + params.Encode()
+	}
+
+	// PREVIOUS
+	links = append(links, gin.H{
+		"url":    ternary(currentPage > 1, buildURL(currentPage-1), nil),
+		"label":  "&laquo; Previous",
+		"active": false,
+	})
+
+	window := 2
+	start := max(2, currentPage-window)
+	end := min(lastPage-1, currentPage+window)
+
+	// FIRST PAGE
+	links = append(links, gin.H{
+		"url":    buildURL(1),
+		"label":  "1",
+		"active": currentPage == 1,
+	})
+
+	// LEFT DOTS
+	if start > 2 {
+		links = append(links, gin.H{
+			"url": nil,
+			"label": "...",
+			"active": false,
+		})
+	}
+
+	// MIDDLE
+	for i := start; i <= end; i++ {
+		links = append(links, gin.H{
+			"url":    buildURL(i),
+			"label":  strconv.Itoa(i),
+			"active": i == currentPage,
+		})
+	}
+
+	// RIGHT DOTS
+	if end < lastPage-1 {
+		links = append(links, gin.H{
+			"url": nil,
+			"label": "...",
+			"active": false,
+		})
+	}
+
+	// LAST PAGE
+	if lastPage > 1 {
+		links = append(links, gin.H{
+			"url":    buildURL(lastPage),
+			"label":  strconv.Itoa(lastPage),
+			"active": currentPage == lastPage,
+		})
+	}
+
+	// NEXT
+	links = append(links, gin.H{
+		"url":    ternary(currentPage < lastPage, buildURL(currentPage+1), nil),
+		"label":  "Next &raquo;",
+		"active": false,
+	})
+
+	return links
+}
+
+func ternary(condition bool, a, b interface{}) interface{} {
+	if condition {
+		return a
+	}
+	return b
 }

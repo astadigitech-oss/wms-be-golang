@@ -31,6 +31,9 @@ func main() {
 		&models.UserScanWeb{},
 		&models.ApproveQueue{},
 		&models.Notification{},
+		&models.SummarySoCategory{},
+		&models.SummarySoColor{},
+		&models.SoColor{},
 	)
 
 	if err != nil {

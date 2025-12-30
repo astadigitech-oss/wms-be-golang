@@ -29,7 +29,7 @@ func RouteHandler(r *gin.Engine) {
 		/* ==================== Inbound Routes ==================== */
 		protected.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go
 		protected.POST("/generate/merge-headers", controllers.MapAndMergeHeaders) //GenerateController.go
-
+		
 		// Manifest Inbound Routes
 		protected.GET("/documents", controllers.IndexDocuments) // DocumentController.go
 		protected.GET("/documents/:code/detail", controllers.DetailDocument) // DocumentController.go
@@ -97,7 +97,20 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/promos", controllers.GetPromos) // ProductController.go
 		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
 		//Stock Opname -> color
-		
+		protected.GET("/summary-so-colors", controllers.GetSummarySoColors) //SOController.go
+		protected.GET("/summary-so-colors/:id", controllers.DetailSummarySoColor) //SOController.go
+		protected.POST("/submit/so-color", controllers.SubmitSoColor) //SOController.go
+		protected.POST("/start-so-color", controllers.StartSoColor) //SOController.go
+		protected.POST("/stop-so-color", controllers.StopSoColor) //SOController.go
+		//Stock Opname -> category
+		protected.GET("/summary-so-categories", controllers.GetSummarySoCategories) //SOController.go
+		protected.GET("/summary-so-categories/:id", controllers.DetailSummarySoCategory) //SOController.go
+		protected.GET("/filter-so-category", controllers.FilterSoCategory) //SOController.go
+		protected.GET("/search-so-category", controllers.SearchSoCategory) //SOController.go
+		protected.POST("/update-check-so", controllers.UpdateCheck) //SOController.go
+		protected.POST("/start-so-category", controllers.StartSoCategory) //SOController.go
+		protected.POST("/stop-so-category", controllers.StopSoCategory) //SOController.go
+
 		/* ==================== REPAIR STATION ==================== */
 		//Migrate To Repair
 		//Abnormal

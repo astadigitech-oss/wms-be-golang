@@ -50,14 +50,22 @@ func (d *Date) Scan(value interface{}) error {
         *d = Date{}
         return nil
     }
-    
-    // Database mengembalikan time.Time. Kita potong (truncate) komponen waktunya.
+
     if t, ok := value.(time.Time); ok {
-        *d = Date(t.Truncate(24 * time.Hour)) 
+        y, m, day := t.Date()
+        loc := t.Location()
+
+        *d = Date(time.Date(
+            y, m, day,
+            0, 0, 0, 0,
+            loc,
+        ))
         return nil
     }
+
     return fmt.Errorf("failed to scan Date type from database: %v", value)
 }
+
 
 type UserScanWeb struct {
 	ID         uint			 `gorm:"primaryKey;autoIncrement" json:"id"`
