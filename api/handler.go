@@ -25,7 +25,9 @@ func RouteHandler(r *gin.Engine) {
         //     adminOnly.POST("/generate", controllers.ProcessExcelHandler)
         //     adminOnly.POST("/generate/merge-headers", controllers.MapAndMergeHeaders)
         // }
-
+		/* ==================== Dashboard ==================== */
+		//StorageReport
+		protected.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
 		/* ==================== Inbound Routes ==================== */
 		protected.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go
 		protected.POST("/generate/merge-headers", controllers.MapAndMergeHeaders) //GenerateController.go
