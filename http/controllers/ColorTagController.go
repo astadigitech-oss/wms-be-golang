@@ -3,6 +3,7 @@ package controllers
 import (
 	"liquid8/wms/config"
 	"liquid8/wms/models"
+	"strconv"
 
 	"net/http"
 
@@ -209,3 +210,28 @@ func DeleteTagColor(c *gin.Context) {
 	})
 }
 
+func GetColorTagByPrice(c *gin.Context) {
+	query := c.DefaultQuery("old_price", "0")
+	price, err := strconv.ParseFloat(query, 64)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "success": false, 
+            "message": "Format harga tidak valid",
+        })
+        return
+    }
+
+	var colors []models.ColorTag
+	if err := config.DB.Where("min_price_color <= ?", price).
+		Where("max_price_color >= ?", price).
+		Find(&colors).Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil data tag color", "error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"success": true,
+		"message": "List data color",
+		"resource": colors,	
+	})
+}

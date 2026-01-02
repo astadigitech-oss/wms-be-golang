@@ -129,5 +129,9 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/users", controllers.CreateUser) //UserController.go
 		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
 		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
+
+		/* ==================== GENERALE ==================== */
+		//Account Setting
+		protected.GET("/product-price-colors", controllers.GetColorTagByPrice) //ColorTagController.go
 	}
 }
