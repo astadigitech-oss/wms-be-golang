@@ -426,11 +426,10 @@ func StaggingProduct(c *gin.Context) {
 	if q != "" {
         like := "%" + q + "%"
 
-        db = db.Where(`
+        db = db.Where(`(
             products.barcode LIKE ? OR
             products.name LIKE ? OR
-            categories.name_category LIKE ?
-        `, like, like, like)
+            categories.name_category LIKE ?)`, like, like, like)
 	}
 
 	// TOTAL COUNT (for pagination info)
@@ -803,10 +802,10 @@ func StaggingFilterProduct(c *gin.Context) {
 	if q != "" {
         like := "%" + q + "%"
 
-        db = db.Where(`
+        db = db.Where(`(
             products.barcode LIKE ? OR
             products.name LIKE ? OR
-            categories.name_category LIKE ?
+            categories.name_category LIKE ?)
         `, like, like, like)
 	}
 
@@ -997,10 +996,10 @@ func StaggingApprovement(c *gin.Context) {
 	if q != "" {
         like := "%" + q + "%"
 
-        db = db.Where(`
+        db = db.Where(`(
             products.barcode LIKE ? OR
             products.name LIKE ? OR
-            categories.name_category LIKE ?
+            categories.name_category LIKE ?)
         `, like, like, like)
 	}
 

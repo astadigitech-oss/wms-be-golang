@@ -17,7 +17,7 @@ func TagColors(c *gin.Context) {
 
 	// Query Category
 	config.DB.
-		Where("name_color LIKE ?", "%"+query+"%").
+		Where("(name_color LIKE ?)", "%"+query+"%").
 		Find(&color_tags)
 
 	// Response

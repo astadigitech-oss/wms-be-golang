@@ -38,7 +38,7 @@ func GetUsers(c *gin.Context) {
 	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {
 		searchPattern := "%" + q + "%"
-		query = query.Where("name LIKE ? OR email LIKE ?", searchPattern, searchPattern)
+		query = query.Where("(name LIKE ? OR email LIKE ?)", searchPattern, searchPattern)
 	}
 
 	// Menghitung total data yang sesuai dengan filter/search sebelum diterapkan limit/offset

@@ -43,7 +43,7 @@ func IndexDocuments(c *gin.Context) {
 
 	// FILTER STATUS
 	if status != "" {
-		db = db.Where("status_document LIKE ?", "%"+status+"%")
+		db = db.Where("(status_document LIKE ?)", "%"+status+"%")
 	}
 
 	// TOTAL COUNT (for pagination info)

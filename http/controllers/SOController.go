@@ -38,7 +38,7 @@ func GetSummarySoColors(c *gin.Context) {
 	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {
 		searchPattern := "%" + q + "%"
-		query = query.Where("start_date LIKE ?", searchPattern)
+		query = query.Where("(start_date LIKE ?)", searchPattern)
 	}
 
 	// Menghitung total data yang sesuai dengan filter/search sebelum diterapkan limit/offset
@@ -397,7 +397,7 @@ func GetSummarySoCategories(c *gin.Context) {
 	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {
 		searchPattern := "%" + q + "%"
-		query = query.Where("start_date LIKE ?", searchPattern)
+		query = query.Where("(start_date LIKE ?)", searchPattern)
 	}
 
 	// Menghitung total data yang sesuai dengan filter/search sebelum diterapkan limit/offset

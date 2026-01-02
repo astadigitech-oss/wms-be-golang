@@ -19,7 +19,7 @@ func Categories(c *gin.Context) {
 	// Query Category
 	config.DB.
 		Model(&models.Category{}).
-		Where("name_category LIKE ?", "%"+query+"%").
+		Where("(name_category LIKE ?)", "%"+query+"%").
 		Find(&categories)
 
 
