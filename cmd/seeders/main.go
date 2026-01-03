@@ -1,15 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"liquid8/wms/config"
+	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
@@ -34,6 +37,10 @@ func main() {
 	}
 
 	if err := seedCategories(config.DB); err != nil {
+		log.Fatal("❌ Gagal :", err)
+	}
+
+	if err := seedRacks(config.DB); err != nil {
 		log.Fatal("❌ Gagal :", err)
 	}
 
@@ -204,6 +211,47 @@ func seedCategories(db *gorm.DB) error {
 	}).Create(&categories).Error
 }
 
+func seedRacks(db *gorm.DB) error {
+	displayRacks := []string{
+		"TOYS HOBBIES",
+		"OTOMOTIF",
+		"ELEKTRONIK",
+		"ACC",
+		"ACC GADGET",
+		"HP, HV",
+		"ART, KOMPOR KOPER",
+		"F&B",
+		"KOSMETIK, FMCG",
+		"OBAT&SUPLEMEN",
+		"ORGANIK, HEWAN, PESTISIDA",
+		"SERVICE & SANITASI, HOME INDUSTRI",
+		"ALAT KESEHATAN",
+		"ATK",
+		"TOOLS",
+		"BABY PRODUCT",
+		"FASHION",
+		"REFURBISHED",
+	}
+
+	for _, name := range displayRacks {
+		randomString := helpers.RandomString(8)
+		barcodeValue := fmt.Sprintf("DIS-%s", randomString)
+
+		// Implementasi FirstOrCreate menggunakan OnConflict
+		return db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: name}, {Name: "display"}},
+			DoNothing: true, // Jika sudah ada, jangan timpa (sama seperti firstOrCreate)
+		}).Create(&models.Rack{
+			Name:      name,
+			Source:    "display",
+			Barcode:   barcodeValue,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}).Error
+	}
+
+	return nil
+}
 
 func truncateAllTables(db *gorm.DB, dbName string) error {
 	var tables []string

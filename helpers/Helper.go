@@ -6,11 +6,10 @@ import (
 	"net/url"
 
 	"context"
-	"crypto/rand"
+	"math/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -102,9 +101,17 @@ func ToStringNumber(v interface{}) string {
 	}
 }
 
+func RandomString(n int) string {
+	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	ret := make([]byte, n)
+	for i := 0; i < n; i++ {
+		ret[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(ret)
+}
+
 func GenerateUniqueBarcode(db *gorm.DB, userID uint, custome_barcode string) (string, error) {
 	const (
-		charset  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		length   = 5
 		maxRetry = 10
 	)
@@ -124,13 +131,8 @@ func GenerateUniqueBarcode(db *gorm.DB, userID uint, custome_barcode string) (st
 	for attempt := 1; attempt <= maxRetry; attempt++ {
 
 		// --- generate random alphanumeric ---
-		random := make([]byte, length)
-		for i := range random {
-			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-			random[i] = charset[n.Int64()]
-		}
-
-		barcode := fmt.Sprintf("%sL%d%s%s", custome_barcode, userID, datePart, string(random))
+		random := RandomString(length)
+		barcode := fmt.Sprintf("%sL%d%s%s", custome_barcode, userID, datePart, random)
 
 		// --- cek apakah barcode sudah ada di DB ---
 		var count int64
@@ -157,7 +159,6 @@ func GenerateUniqueBarcode(db *gorm.DB, userID uint, custome_barcode string) (st
 
 func GenerateCodeDocument(db *gorm.DB) (string, error) {
 	const (
-		charset  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		length   = 4
 		maxRetry = 10
 	)
@@ -177,13 +178,8 @@ func GenerateCodeDocument(db *gorm.DB) (string, error) {
 	for attempt := 1; attempt <= maxRetry; attempt++ {
 
 		// --- generate random alphanumeric ---
-		random := make([]byte, length)
-		for i := range random {
-			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-			random[i] = charset[n.Int64()]
-		}
-
-		barcode := fmt.Sprintf("DOC%s%s", datePart, string(random))
+		random := RandomString(length)
+		barcode := fmt.Sprintf("DOC%s%s", datePart, random)
 
 		// --- cek apakah barcode sudah ada di DB ---
 		var count int64
@@ -210,7 +206,6 @@ func GenerateCodeDocument(db *gorm.DB) (string, error) {
 
 func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	const (
-		charset  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		length   = 5
 		maxRetry = 10
 	)
@@ -227,12 +222,7 @@ func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	for attempt := 1; attempt <= maxRetry; attempt++ {
 
 		// --- generate random alphanumeric ---
-		random := make([]byte, length)
-		for i := range random {
-			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-			random[i] = charset[n.Int64()]
-		}
-
+		random := RandomString(length)
 		barcode := fmt.Sprintf("LQB%s", string(random))
 
 		// --- cek apakah barcode sudah ada di DB ---
@@ -260,7 +250,6 @@ func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 
 func GenerateBarcodeBundleRepair(db *gorm.DB) (string, error) {
 	const (
-		charset  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		length   = 5
 		maxRetry = 10
 	)
@@ -277,12 +266,7 @@ func GenerateBarcodeBundleRepair(db *gorm.DB) (string, error) {
 	for attempt := 1; attempt <= maxRetry; attempt++ {
 
 		// --- generate random alphanumeric ---
-		random := make([]byte, length)
-		for i := range random {
-			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-			random[i] = charset[n.Int64()]
-		}
-
+		random := RandomString(length)
 		barcode := fmt.Sprintf("LR%s", string(random))
 
 		// --- cek apakah barcode sudah ada di DB ---
