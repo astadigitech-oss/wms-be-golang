@@ -3,14 +3,28 @@ package main
 import (
 	"liquid8/wms/api"
 	"liquid8/wms/config"
+	"log"
+	"os"
+
 	// "liquid8/wms/models"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	config.InitDB()
-	// 
-	server := gin.Default()
+	appEnv := os.Getenv("APP_ENV")
+	var server *gin.Engine
+
+	if appEnv == "production" {
+		gin.SetMode(gin.ReleaseMode)
+		server = gin.New()
+		server.Use(gin.Recovery())
+		log.Println("--- PRODUCTION MODE ---")
+	} else {
+		gin.SetMode(gin.DebugMode)
+		server = gin.Default()
+		log.Println("--- DEVELOPMENT MODE ---")
+	}
 
 	// Middleware CORS
 	server.Use(func(c *gin.Context) {
