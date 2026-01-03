@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"gorm.io/gorm"
 )
 
 func TagColors(c *gin.Context) {
@@ -98,7 +99,7 @@ func AddTagColor(c *gin.Context) {
 		return
 	}
 
-	if err != nil {
+	if err != nil && err != gorm.ErrRecordNotFound {
 		// error DB selain not found
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": false,
@@ -206,7 +207,7 @@ func UpdateTagColor(c *gin.Context) {
 		return
 	}
 
-	if err != nil {
+	if err != nil && err != gorm.ErrRecordNotFound {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": false,
 			"message": "Gagal validasi kode warna",
