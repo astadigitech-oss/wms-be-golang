@@ -226,7 +226,7 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
 				// Mapping ke Product (ID Relasi akan diisi saat insert)
 				location := "staging"
 				pNew := models.Product{
-					CodeDocument:  currentDocCode,
+					CodeDocument:  &currentDocCode,
 					Barcode:       row[0],
 					Name:          normalize(row[1]),
 					Quantity:      int64(qty),

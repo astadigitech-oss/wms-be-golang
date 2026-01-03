@@ -15,10 +15,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"gorm.io/gorm"
-    "github.com/go-playground/validator/v10"
 )
 
+// ============================= INBOUND =============================
 type RiwayatCheckUpdateData struct {
     RiwayatCheck models.RiwayatCheck 
     TotalDiscrepancy int64         
@@ -134,7 +135,7 @@ func ProductApprove(c *gin.Context) {
 
         // Build product to insert
         newProduct = models.Product{
-            CodeDocument: 	 *old.CodeDocument,
+            CodeDocument: 	 old.CodeDocument,
             ProductOldID: old.ID,
             Barcode: 	 barcode,
             Name: 	 payload.NewNameProduct,
@@ -164,7 +165,7 @@ func ProductApprove(c *gin.Context) {
             if discount > category.MaxPriceCategory {
                 discount = category.MaxPriceCategory
             } 
-            newProduct.Discount = &discount
+            // newProduct.Discount = &discount
             newProduct.Price = old.OldPriceProduct - discount
             newProduct.CategoryID = payload.CategoryID
             newProduct.TagColorID = nil
@@ -372,8 +373,321 @@ func updateOrCreateDailyScan(tx *gorm.DB, userID uint, codeDocument string) erro
 }
 
 func AddProductManual(c *gin.Context) {
+    type AddProductPayload struct {
+        NameProduct     string  `json:"name_product" binding:"required"`
+        QuantityProduct int64     `json:"quantity_product" binding:"required,gt=0"`
+        PriceProduct    float64 `json:"price_product" binding:"required,gt=0"`
+        Quality         string  `json:"quality" binding:"required,oneof=lolos damaged abnormal"`
+        CategoryID      *uint64    `json:"category_id" binding:"omitempty,gt=0"`
+        TagColorID      *uint64    `json:"tag_color_id" binding:"omitempty,gt=0"`
+        Description     *string  `json:"description" binding:"omitempty"`
+    }
+
+    var payload AddProductPayload
+    if err := c.ShouldBindJSON(&payload); err != nil {
+        ve, ok := err.(validator.ValidationErrors)
+        if !ok {
+            c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+            return
+        }
+
+        errors := make(map[string]string)
+        for _, e := range ve {
+            field := strings.ToLower(e.Field())
+
+            switch field {
+            case "nameproduct":
+                errors["name_product"] = "Nama produk wajib diisi"
+            case "quantityproduct":
+                if e.Tag() == "required" {
+                    errors["quantity_product"] = "Jumlah produk wajib diisi"
+                } else {
+                    errors["quantity_product"] = "Jumlah harus lebih besar dari 0"
+                }
+            case "priceproduct":
+                if e.Tag() == "required" {
+                    errors["price_product"] = "Harga wajib diisi"
+                } else {
+                    errors["price_product"] = "Harga harus lebih besar dari 0"
+                }
+           case "quality":
+                errors["quality"] = "Kualitas harus salah satu dari: lolos, damaged, abnormal"
+            default:
+                // fallback: use the json tag name if possible
+                errors[strings.ToLower(e.Field())] = e.Error()
+            }
+        }
+
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": false,
+            "message": "Validasi gagal",
+            "errors": errors,
+        })
+        return
+    }
+
+    userID, _ := c.Get("user_id")
+    var user models.User
+    if err := config.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
+            return
+        }else {
+            c.JSON(500, gin.H{"status": false, "error": err.Error()})
+            return
+        }
+    }
+
+    tx := config.DB.Begin()
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+    // Persiapkan Data Produk Baru
+	newProduct := models.Product{
+		Name:               payload.NameProduct,
+		Quantity:           payload.QuantityProduct,
+		Status:             "display",
+		Quality:            payload.Quality,
+	}
+
+    if payload.PriceProduct >= 100000 {
+        status := "staging"
+        newProduct.LocationType = &status
+        if payload.CategoryID == nil {
+            c.JSON(400, gin.H{"success": false, "message": "Total price >= 100rb, wajib pilih kategori"})
+            tx.Rollback()
+            return
+        }
+
+        var category models.Category
+        if err := tx.First(&category, payload.CategoryID).Error; err != nil {
+            tx.Rollback()
+            c.JSON(404, gin.H{"success": false, "message": "Category tidak ditemukan", "error": err.Error()})
+            return
+        }
+
+        discount := payload.PriceProduct * (float64(category.DiscountCategory)/100.0)
+        discount = math.Round(discount)
+        if discount > category.MaxPriceCategory {
+            discount = category.MaxPriceCategory
+        } 
+        // newProduct.Discount = &discount
+        newProduct.Price = payload.PriceProduct - discount
+        newProduct.DisplayPrice = payload.PriceProduct - discount
+        newProduct.CategoryID = payload.CategoryID
+        newProduct.TagColorID = nil
+
+        // Cek Summary SO Category
+	    var checkSoCategory models.SummarySoCategory
+        if err := tx.Where("type = ?", "process").First(&checkSoCategory).Error; err != nil {
+            if err != gorm.ErrRecordNotFound {
+                tx.Rollback()
+                c.JSON(http.StatusInternalServerError, gin.H{
+                    "status": false,
+                    "message": "Gagal mengambil summary SO category",
+                    "error": err.Error(),
+                })
+                return
+            }
+        }
+
+        if checkSoCategory.ID != 0 {
+            columnName := "product_staging"
+            switch payload.Quality {
+            case "damaged":
+                columnName = "product_damaged"
+            case "abnormal":
+                columnName = "product_abnormal"
+            }
+
+            if err := tx.Model(&checkSoCategory).
+                UpdateColumn(columnName, gorm.Expr(columnName+" + ?", 1)).
+                Error; err != nil {
+
+                tx.Rollback()
+                c.JSON(http.StatusInternalServerError, gin.H{
+                    "status": false,
+                    "message": "Gagal memperbarui summary category",
+                    "column": columnName,
+                    "error": err.Error(),
+                })
+                return
+            }
+        } 
+    } else {
+        if payload.TagColorID == nil {
+            tx.Rollback()
+            c.JSON(400, gin.H{"success": false, "message": "Total price < 100rb, wajib pilih tag color"})
+            return
+        }
+
+        var color_tag models.ColorTag
+        if err := tx.First(&color_tag, payload.TagColorID).Error; err != nil {
+            tx.Rollback()
+            c.JSON(404, gin.H{"success": false, "message": "Color tag tidak ditemukan", "error": err.Error()})
+            return
+        }
+
+        if (payload.PriceProduct < color_tag.MinPriceColor || payload.PriceProduct > color_tag.MaxPriceColor) {
+            tx.Rollback()
+            c.JSON(400, gin.H{"success": false, "message": "data color tag tidak sesuai dengan harga produk"})
+            return
+        }
+
+        newProduct.Price = color_tag.FixedPriceColor
+        newProduct.DisplayPrice = color_tag.FixedPriceColor
+        newProduct.TagColorID = payload.TagColorID
+        newProduct.CategoryID = nil
+
+        // Cek Summary SO Color
+        var checkSoColor models.SummarySoColor
+        if err := tx.Where("type = ?", "process").First(&checkSoColor).Error; err != nil {
+            if err != gorm.ErrRecordNotFound {
+                tx.Rollback()
+                c.JSON(http.StatusInternalServerError, gin.H{
+                    "status": false,
+                    "message": "Gagal mengambil summary SO color",
+                    "error": err.Error(),
+                })
+                return
+            }
+        }
+
+        // SO COLOR (UPSERT)
+        if checkSoColor.ID != 0 {
+            if err := incrementOrCreateSoColor(
+                tx,
+                checkSoColor.ID,
+                color_tag.NameColor,
+                payload.Quality,
+            ); err != nil {
+                tx.Rollback()
+                c.JSON(http.StatusInternalServerError, gin.H{
+                    "status": false,
+                    "message": "Gagal memperbarui summary SO color",
+                    "error": err.Error(),
+                })
+                return
+            }
+        }
+    }
+
+	if payload.Quality != "lolos" {
+		newProduct.QualityText = payload.Description
+	}
+
+	// Generate Barcode
+	barcode, err := helpers.GenerateUniqueBarcode(tx, user.ID, "")
+    if err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"success": false, "message": "Gagal generate barcode product", "error": err.Error()})
+        return
+    }
+
+    newProduct.Barcode = barcode
+    oldProduct := models.ProductOld{
+        OldNameProduct: newProduct.Name,
+        OldPriceProduct: newProduct.Price,
+        OldQuantityProduct: int(newProduct.Quantity),
+        InboundType: "manual-inbound",
+    }
+
+	// Simpan Old Produk
+	if err := tx.Create(&oldProduct).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+    newProduct.ProductOldID = oldProduct.ID
+	// Simpan Produk
+	if err := tx.Create(&newProduct).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
     
+    metadata := map[string]interface{}{
+        "product_id": newProduct.ID,
+        "barcode": newProduct.Barcode,
+        "product_name": newProduct.Name,
+        "quantity": newProduct.Quantity,
+        "price": newProduct.Price,
+        "quality": newProduct.Quality,
+    }
+    if err := helpers.LogUserAction(user.ID, user.Name, "Menambahkan product di manual inbound", "inbound/manual-inbound", metadata); err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal membuat user log",
+            "error": err.Error(),
+        })
+    }
+
+	// Commit Transaksi
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "berhasil menambah data",
+		"data":    newProduct,
+	})
 }
+
+func incrementOrCreateSoColor(tx *gorm.DB,summaryColorID uint,color string,quality string) error {
+
+	var soColor models.SoColor
+	err := tx.
+		Where("summary_so_color_id = ? AND color = ?", summaryColorID, color).
+		First(&soColor).Error
+
+	if err == nil {
+        // set kolom sesuai kondisi
+        updateData := map[string]interface{}{
+			"total_color": gorm.Expr("total_color + ?", 1),
+		}
+		switch quality {
+		case "lolos":
+			updateData["product_addition"] = gorm.Expr("product_addition + ?", 1)
+		case "abnormal":
+			updateData["product_abnormal"] = gorm.Expr("product_abnormal + ?", 1)
+		case "damaged":
+			updateData["product_damaged"] = gorm.Expr("product_damaged + ?", 1)
+		}
+		return tx.Model(&soColor).Updates(updateData).Error
+	}
+
+	if err == gorm.ErrRecordNotFound {
+		// record tidak ada → create baru
+		data := models.SoColor{
+			SummarySoColorID: uint64(summaryColorID),
+            TotalColor: 1,
+			Color: color,
+		}
+
+		// set kolom sesuai kondisi
+		switch quality {
+		case "lolos":
+			data.ProductAddition = 1
+		case "abnormal":
+			data.ProductAbnormal = 1
+		case "damaged":
+			data.ProductDamaged = 1
+		}
+
+		return tx.Create(&data).Error
+	}
+
+	return err
+}
+
 
 // ============================= STAGGING =============================
 type productWithCategoryName struct {
@@ -2105,7 +2419,7 @@ func GetProductDamaged(c *gin.Context) {
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
         Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
         Where("products.is_so IS NULL").
-        Where("products.quality = ?", "damage").
+        Where("products.quality = ?", "damaged").
         Where("products.status NOT IN ?", []string{"migrate", "sale", "dump", "scrap_qcd"})
 
 	// Searching (misalnya, mencari berdasarkan nama atau email)
