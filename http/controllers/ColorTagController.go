@@ -82,6 +82,32 @@ func AddTagColor(c *gin.Context) {
 		return
 	}
 
+	// =========================
+	// CEK HEXA CODE 
+	var existing models.ColorTag
+	err := config.DB.
+		Where("hexa_code_color = ?", payload.HexaCodeColor).
+		First(&existing).Error
+
+	if err == nil {
+		// data ditemukan → hex sudah ada
+		c.JSON(http.StatusConflict, gin.H{
+			"status": false,
+			"message": "Kode warna sudah digunakan",
+		})
+		return
+	}
+
+	if err != nil {
+		// error DB selain not found
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": false,
+			"message": "Gagal mengecek kode warna",
+			"error": err.Error(),
+		})
+		return
+	}
+
 	color_tag := models.ColorTag{
 		NameColor:     payload.NameColor,
 		HexaCodeColor: payload.HexaCodeColor,
@@ -157,6 +183,34 @@ func UpdateTagColor(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  false,
 			"message": "Color Tag tidak ditemukan",
+		})
+		return
+	}
+
+	// CEK DUPLIKASI HEXA CODE
+	// =========================
+	var duplicate models.ColorTag
+	err := config.DB.
+		Where("hexa_code_color = ? AND id <> ?", payload.HexaCodeColor, color_tag.ID).
+		First(&duplicate).Error
+
+	if err == nil {
+		// hex dipakai record lain
+		c.JSON(http.StatusConflict, gin.H{
+			"status": false,
+			"message": "Kode warna sudah digunakan",
+			"errors": gin.H{
+				"hexa_code_color": "Kode warna sudah terdaftar",
+			},
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": false,
+			"message": "Gagal validasi kode warna",
+			"error": err.Error(),
 		})
 		return
 	}
