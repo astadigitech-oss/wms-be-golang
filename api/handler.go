@@ -63,6 +63,18 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/stagging-approves", controllers.StaggingApprovesStore) // ProductController.go
 		protected.DELETE("/stagging-approves/:product_id", controllers.DestroyStaggingApprove) // ProductController.go
 		
+		/* ==================== RACK ==================== */
+		protected.GET("/racks", controllers.GetRacks) //RackController.go
+		protected.GET("/racks/:rack_id/detail", controllers.RackDetail) //RackController.go
+		protected.GET("/racks/list-product", controllers.ProductBySourceRack) //RackController.go
+		protected.POST("/racks", controllers.AddRack) //RackController.go
+		protected.POST("/racks/:rack_id/move-to-display", controllers.MoveRackToDisplay) //RackController.go
+		protected.PUT("/racks/:rack_id", controllers.UpdateRack) //RackController.go
+		protected.POST("/racks/:rack_id/add-product/:barcode", controllers.AddProductToRack) //RackController.go
+		protected.DELETE("/racks/:rack_id/remove-product/:product_id", controllers.RemoveProductFromRack) //RackController.go
+		protected.DELETE("/racks/:rack_id", controllers.DeleteRack) //RackController.go	
+		// protected.PUT("/racks/:id", controllers.UpdateRack) //RackController.go
+
 		/* ==================== INVENTORY ==================== */
 		//Product
 		protected.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
