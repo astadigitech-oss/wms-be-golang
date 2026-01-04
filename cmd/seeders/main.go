@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
+	// "os"
 	"time"
 
 	"liquid8/wms/config"
@@ -17,10 +17,11 @@ import (
 
 func main() {
 	config.InitDB()
-
-	// empty tall table
-	if err := truncateAllTables(config.DB, os.Getenv("DB_NAME")); err != nil {
-		log.Fatal("❌ Empty Error :", err)
+	log.Println("⏳ Memulai seeder...")
+	
+	// truncateTables()
+	if err := truncateTables(); err != nil {
+		log.Fatal("❌ Gagal :", err)
 	}
 
 	// start seed
@@ -222,7 +223,7 @@ func seedRacks(db *gorm.DB) error {
 		"ART, KOMPOR KOPER",
 		"F&B",
 		"KOSMETIK, FMCG",
-		"OBAT&SUPLEMEN",
+		"OBAT & SUPLEMEN",
 		"ORGANIK, HEWAN, PESTISIDA",
 		"SERVICE & SANITASI, HOME INDUSTRI",
 		"ALAT KESEHATAN",
@@ -233,49 +234,45 @@ func seedRacks(db *gorm.DB) error {
 		"REFURBISHED",
 	}
 
-	for _, name := range displayRacks {
-		randomString := helpers.RandomString(8)
-		barcodeValue := fmt.Sprintf("DIS-%s", randomString)
+	var racks []models.Rack
 
-		// Implementasi FirstOrCreate menggunakan OnConflict
-		return db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: name}, {Name: "display"}},
-			DoNothing: true, // Jika sudah ada, jangan timpa (sama seperti firstOrCreate)
-		}).Create(&models.Rack{
-			Name:      name,
-			Source:    "display",
-			Barcode:   barcodeValue,
+	for _, name := range displayRacks {
+		racks = append(racks, models.Rack{
+			Name:    name,
+			Source:  "display",
+			Barcode: fmt.Sprintf("DIS-%s", helpers.RandomString(8)),
 			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		}).Error
+            UpdatedAt: time.Now(),
+		})
 	}
 
-	return nil
+	// Lakukan satu kali hit ke database untuk semua data
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "name"}, {Name: "source"}},
+		DoNothing: true,
+	}).Create(&racks).Error
 }
 
-func truncateAllTables(db *gorm.DB, dbName string) error {
-	var tables []string
-
-	err := db.Raw(`
-		SELECT table_name 
-		FROM information_schema.tables 
-		WHERE table_schema = ?
-	`, dbName).Scan(&tables).Error
-	if err != nil {
-		return err
+func truncateTables() error {
+	tables := []string{
+		"roles",
+		"users",
+		"color_tags",
+		"categories",
+		"racks",
 	}
-
 	// Matikan foreign key check
-	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
+	config.DB.Exec("SET FOREIGN_KEY_CHECKS = 0")
 
 	for _, table := range tables {
-		db.Exec("TRUNCATE TABLE " + table)
+		if err := config.DB.Exec("TRUNCATE TABLE " + table).Error; err != nil {
+			config.DB.Exec("SET FOREIGN_KEY_CHECKS = 1")
+			return err
+		}
 	}
 
 	// Hidupkan lagi
-	db.Exec("SET FOREIGN_KEY_CHECKS = 1")
-
+	config.DB.Exec("SET FOREIGN_KEY_CHECKS = 1")
 	return nil
 }
-
 
