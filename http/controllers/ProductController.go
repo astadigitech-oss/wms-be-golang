@@ -765,13 +765,13 @@ func StaggingProduct(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
 		"data": gin.H{
 			"status":  true,
-			"message": "List Documents",
+			"message": "List Product Stagging",
 			"resource": gin.H{
 				"current_page":   page,
 				"data":           products,
@@ -1142,7 +1142,7 @@ func StaggingFilterProduct(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -1336,7 +1336,7 @@ func StaggingApprovement(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -1499,7 +1499,7 @@ func GetProductsByColor(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -1683,7 +1683,7 @@ func GetProductsByCategory(c *gin.Context) {
 
     // pagination links
     lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"status":  true,
@@ -1768,7 +1768,7 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -1982,7 +1982,7 @@ func GetPromos(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -2200,7 +2200,7 @@ func GetProductAbnormal(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -2488,7 +2488,7 @@ func GetProductDamaged(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{

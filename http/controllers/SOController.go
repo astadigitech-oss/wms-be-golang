@@ -61,7 +61,7 @@ func GetSummarySoColors(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -427,7 +427,7 @@ func GetSummarySoCategories(c *gin.Context) {
 	fullURL := scheme + "://" + baseURL
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -586,7 +586,7 @@ func FilterSoCategory(c *gin.Context) {
 
     // pagination links
     lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"status":  true,
@@ -711,7 +711,7 @@ func SearchSoCategory(c *gin.Context)  {
 
     // pagination links
     lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"status":  true,

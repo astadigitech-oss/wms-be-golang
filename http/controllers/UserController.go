@@ -110,7 +110,7 @@ func GetUsers(c *gin.Context) {
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
 		"data": gin.H{

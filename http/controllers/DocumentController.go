@@ -66,7 +66,7 @@ func IndexDocuments(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
@@ -134,7 +134,7 @@ func DetailDocument(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, query)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// Ambil document berdasarkan code_document
 	var document models.Document
@@ -531,7 +531,7 @@ func CheckHistories(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -594,7 +594,7 @@ func DetailHistory(c *gin.Context) {
 	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 
 	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage, q)
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{

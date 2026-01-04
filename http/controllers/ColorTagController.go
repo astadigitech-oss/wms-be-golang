@@ -99,7 +99,7 @@ func AddTagColor(c *gin.Context) {
 		return
 	}
 
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != gorm.ErrRecordNotFound {
 		// error DB selain not found
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": false,
@@ -207,7 +207,7 @@ func UpdateTagColor(c *gin.Context) {
 		return
 	}
 
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != gorm.ErrRecordNotFound {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": false,
 			"message": "Gagal validasi kode warna",

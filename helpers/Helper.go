@@ -337,7 +337,6 @@ func BuildPaginationLinks(
 	c *gin.Context,
 	currentPage int,
 	lastPage int,
-	q string,
 ) []gin.H {
 
 	links := []gin.H{}
@@ -354,13 +353,17 @@ func BuildPaginationLinks(
 		c.Request.URL.Path,
 	)
 
+	existingQueries := c.Request.URL.Query()
 	buildURL := func(page int) string {
-		params := url.Values{}
-		params.Set("page", strconv.Itoa(page))
-		if q != "" {
-			params.Set("q", q)
+		params := make(url.Values)
+        for k, v := range existingQueries {
+			params[k] = v
 		}
-		return baseURL + "?" + params.Encode()
+
+        // Override atau Set parameter 'page'
+        params.Set("page", strconv.Itoa(page))
+        
+        return baseURL + "?" + params.Encode()
 	}
 
 	// PREVIOUS
