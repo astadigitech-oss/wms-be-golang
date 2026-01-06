@@ -37,31 +37,37 @@ func main() {
 	}
 }
 
+var Tables = []interface{}{
+	&models.Role{},
+	&models.User{},
+	&models.UserToken{},
+	&models.UserLog{},
+	&models.Document{},
+	&models.Generate{},
+	&models.RiwayatCheck{},
+	&models.ProductOld{},
+	&models.Category{},
+	&models.ColorTag{},
+	&models.Product{},
+	&models.Rack{},
+	&models.Bundle{},
+	&models.BundleItem{},
+	&models.Promo{},
+	&models.UserScanWeb{},
+	&models.ApproveQueue{},
+	&models.Notification{},
+	&models.SummarySoCategory{},
+	&models.SummarySoColor{},
+	&models.SoColor{},
+	&models.BklDocument{},
+	&models.BklItem{},
+}
+
+
+
 func runMigrations() {
 	log.Println("⏳ Menjalankan migrasi...")
-	err := config.DB.AutoMigrate(
-		&models.Role{},
-		&models.User{},
-		&models.UserToken{},
-		&models.UserLog{},
-		&models.Document{},
-		&models.Generate{},
-		&models.RiwayatCheck{},
-		&models.ProductOld{},
-		&models.Category{},
-		&models.ColorTag{},
-		&models.Product{},
-		&models.Rack{},
-		&models.Bundle{},
-		&models.BundleItem{},
-		&models.Promo{},
-		&models.UserScanWeb{},
-		&models.ApproveQueue{},
-		&models.Notification{},
-		&models.SummarySoCategory{},
-		&models.SummarySoColor{},
-		&models.SoColor{},
-	)
+	err := config.DB.AutoMigrate(Tables...)
 
 	if err != nil {
 		log.Fatal("❌ Gagal migrate:", err)
@@ -74,29 +80,7 @@ func dropMigrations() {
 	log.Println("⚠️ Menghapus semua tabel...")
 	// Matikan pengecekan foreign key
 	config.DB.Exec("SET FOREIGN_KEY_CHECKS = 0;")
-	err := config.DB.Migrator().DropTable(
-		&models.SoColor{},
-		&models.SummarySoColor{},
-		&models.SummarySoCategory{},
-		&models.Notification{},
-		&models.ApproveQueue{},
-		&models.UserScanWeb{},
-		&models.Promo{},
-		&models.BundleItem{},
-		&models.Bundle{},
-		&models.Product{}, // Hapus product sebelum category/rack/color_tag
-		&models.ProductOld{},
-		&models.RiwayatCheck{},
-		&models.Generate{},
-		&models.Document{},
-		&models.UserLog{},
-		&models.UserToken{},
-		&models.User{},
-		&models.Role{},
-		&models.Category{},
-		&models.ColorTag{},
-		&models.Rack{},
-	)
+	err := config.DB.Migrator().DropTable(Tables...)
 	// Hidupkan kembali pengecekan foreign key
 	config.DB.Exec("SET FOREIGN_KEY_CHECKS = 1;")
 

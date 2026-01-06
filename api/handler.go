@@ -111,6 +111,13 @@ func RouteHandler(r *gin.Engine) {
 		//Slow Moving Product -> promo
 		protected.GET("/promos", controllers.GetPromos) // ProductController.go
 		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
+		//Slow Moving Product - BKL
+		protected.GET("/bkl-documents", controllers.ListBKLDocuments) //DocumentController.go
+		protected.GET("/bkl-document/generate-code", controllers.GenerateBKLCode) //DocumentController.go
+		protected.GET("/bkl-document/:id/detail", controllers.DetailBKL) //DocumentController.go
+		protected.POST("/bkl-document", controllers.CreateBKL) //DocumentController.go
+		protected.POST("/bkl-document/:id/to-edit", controllers.ToEditBKL) //DocumentController.go
+		protected.PUT("/bkl-document/:id", controllers.UpdateBKL) //DocumentController.go
 		//Stock Opname -> color
 		protected.GET("/summary-so-colors", controllers.GetSummarySoColors) //SOController.go
 		protected.GET("/summary-so-colors/:id", controllers.DetailSummarySoColor) //SOController.go

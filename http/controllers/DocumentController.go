@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"errors"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
+	"net/http"
 
 	"database/sql"
 	"fmt"
@@ -11,9 +13,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
 	// "time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
+	"gorm.io/gorm"
 )
 
 // ==================== Manifest Inbound ====================
@@ -614,3 +619,545 @@ func DetailHistory(c *gin.Context) {
 		},
 	})
 }
+
+// ===================== Slow Moving Product BKL ====================
+func ListBKLDocuments(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 10
+	offset := (page - 1) * limit
+
+	var bklDocuments []models.BklDocument
+	query := config.DB.Model(&models.BklDocument{})
+
+	if q != "" {
+		query = query.Where("code_bkl LIKE ?", "%"+q+"%")
+	}
+
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":  false,
+			"message": "Terjadi kesalahan",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := query.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&bklDocuments).Error; err != nil {
+		
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":  false,
+			"message": "Terjadi kesalahan",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	// FINAL RESPONSE
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Documents",
+			"resource": gin.H{
+				"current_page":   page,
+				"data":           bklDocuments,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + int(total),
+				"total":          total,
+			},
+		},
+	})
+}
+
+func GenerateBKLCode(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	// AMBIL USER ID DARI CONTEXT
+	userIDAny, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  false,
+			"message": "Unauthorized",
+		})
+		return
+	}
+
+	userID := userIDAny.(uint)
+
+	// AMBIL DOKUMEN TERAKHIR
+	var lastDoc models.BklDocument
+
+	err := config.DB.
+		Order("id DESC").
+		First(&lastDoc).Error
+
+	nextSequence := 1
+
+	if err == nil {
+		parts := strings.Split(lastDoc.CodeBkl, "-")
+		if len(parts) > 0 {
+			if lastNumber, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+				nextSequence = lastNumber + 1
+			}
+		}
+	}
+
+	// GENERATE CODE
+	generatedCode := fmt.Sprintf("%d-BKL-%06d", userID, nextSequence)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Berhasil generate code",
+		"data": gin.H{
+			"code_document_bkl": generatedCode,
+		},
+	})
+}
+
+func DetailBKL(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Format ID Summary SO tidak valid"})
+        return
+    }
+
+	var bklDocument models.BklDocument
+	if err := config.DB.Preload("BklItem.ColorTag").First(&bklDocument, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "BKL Document tidak ditemukan"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Detail BKL Document",
+		"resource": bklDocument,
+	})
+}
+
+func CreateBKL(c *gin.Context) {
+	type payloadRequest struct {
+		NameDocument string `json:"name_document" binding:"required"`
+		Type         string `json:"type" binding:"required,oneof=in out"`
+		DamageQty    *int   `json:"damage_qty" binding:"omitempty,min=1"`
+		Colors       []struct {
+			ColorTagID uint64 `json:"color_tag_id" binding:"required"`
+			Qty        int    `json:"qty" binding:"required,min=1"`
+		} `json:"colors" binding:"min=1,dive"`
+	}
+
+	var payload payloadRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errorsMap := make(map[string]string)
+
+		for _, e := range ve {
+			field := e.Field()
+			structField := e.StructField()
+			namespace := e.Namespace()
+
+			// ===== VALIDASI COLORS ARRAY =====
+			if field == "Colors" {
+				if e.Tag() == "min" {
+					errorsMap["colors"] = "Daftar warna tidak boleh kosong"
+				}
+				continue
+			}
+
+			// ===== VALIDASI ITEM DALAM COLORS =====
+			if strings.Contains(namespace, ".Colors[") {
+				switch structField {
+				case "ColorTagID":
+					errorsMap["color_tag_id"] = "Color tag wajib diisi"
+				case "Qty":
+					errorsMap["qty"] = "Quantity minimal 1"
+				default:
+					errorsMap[strings.ToLower(structField)] =
+						"Validasi gagal pada field " + structField
+				}
+				continue
+			}
+
+			// ===== FIELD LAIN =====
+			switch field {
+			case "NameDocument":
+				errorsMap["name_document"] = "Nama dokumen wajib diisi"
+			case "Type":
+				errorsMap["type"] = "Type harus bernilai in atau out"
+			case "DamageQty":
+				errorsMap["damage_qty"] = "Damage qty minimal 1"
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+	var colorTagIDs []uint64
+	for _, c := range payload.Colors {
+		colorTagIDs = append(colorTagIDs, c.ColorTagID)
+	}
+
+	var existingIDs []uint64
+	err := config.DB.
+		Model(&models.ColorTag{}).
+		Where("id IN ?", colorTagIDs).
+		Pluck("id", &existingIDs).Error
+
+	if err != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal validasi color tag"})
+		return
+	}
+
+	if len(existingIDs) != len(colorTagIDs) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status": false,
+			"message": "Salah satu color tag tidak ditemukan",
+		})
+		return
+	}
+
+	// AMBIL USER ID
+	userIDAny, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": false,
+			"message": "Unauthorized",
+		})
+		return
+	}
+
+	userID := userIDAny.(uint)
+
+	// TRANSACTION
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	// INSERT BKL DOCUMENT
+	document := models.BklDocument{
+		CodeBkl: payload.NameDocument,
+		Status:  "done",
+		UserID:  uint64(userID),
+	}
+
+	if err := tx.Create(&document).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"status": false,
+			"message": "Gagal menyimpan dokumen",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// SIMPAN ITEMS
+	if payload.DamageQty != nil {
+		item := models.BklItem{
+			BklDocumentID: document.ID,
+			Qty:           *payload.DamageQty,
+			Type:          payload.Type,
+			IsDamaged:     true,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item", "error": err.Error()})
+			return
+		}
+	}
+
+	for _, item := range payload.Colors {
+		item := models.BklItem{
+			BklDocumentID: document.ID,
+			TagColorID:    &item.ColorTagID,
+			Qty:           item.Qty,
+			Type:          payload.Type,
+			IsDamaged:     false,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item"})
+			return
+		}
+	}
+
+	// Commit
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Commit failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": true,
+		"message": "BKL Berhasil Dibuat",
+	})
+}
+
+func ToEditBKL(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Format ID Summary SO tidak valid"})
+        return
+    }
+
+	var bklDocument models.BklDocument
+	if err := config.DB.First(&bklDocument, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "BKL tidak ditemukan"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal mengambil data BKL", "error": err.Error()})
+		}
+
+		return
+	}
+
+	if err := config.DB.Model(&bklDocument).Update("status", "process").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal memperbarui data BKL", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true, 
+		"message": "Mode Edit Aktif",
+		"resource": bklDocument,
+	})
+}
+
+func UpdateBKL(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Format ID Summary SO tidak valid"})
+        return
+    }
+
+	type payloadRequest struct {
+		NameDocument string `json:"name_document" binding:"required"`
+		Type         string `json:"type" binding:"required,oneof=in out"`
+		DamageQty    *int   `json:"damage_qty" binding:"omitempty,min=1"`
+		Colors       []struct {
+			ColorTagID uint64 `json:"color_tag_id" binding:"required"`
+			Qty        int    `json:"qty" binding:"required,min=1"`
+		} `json:"colors" binding:"min=1,dive"`
+	}
+
+	var payload payloadRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errorsMap := make(map[string]string)
+
+		for _, e := range ve {
+			field := e.Field()
+			structField := e.StructField()
+			namespace := e.Namespace()
+
+			// ===== VALIDASI COLORS ARRAY =====
+			if field == "Colors" {
+				if e.Tag() == "min" {
+					errorsMap["colors"] = "Daftar warna tidak boleh kosong"
+				}
+				continue
+			}
+
+			// ===== VALIDASI ITEM DALAM COLORS =====
+			if strings.Contains(namespace, ".Colors[") {
+				switch structField {
+				case "ColorTagID":
+					errorsMap["color_tag_id"] = "Color tag wajib diisi"
+				case "Qty":
+					errorsMap["qty"] = "Quantity minimal 1"
+				default:
+					errorsMap[strings.ToLower(structField)] =
+						"Validasi gagal pada field " + structField
+				}
+				continue
+			}
+
+			// ===== FIELD LAIN =====
+			switch field {
+			case "NameDocument":
+				errorsMap["name_document"] = "Nama dokumen wajib diisi"
+			case "Type":
+				errorsMap["type"] = "Type harus bernilai in atau out"
+			case "DamageQty":
+				errorsMap["damage_qty"] = "Damage qty minimal 1"
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+	// TRANSACTION
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	var bklDocument models.BklDocument
+	if err := tx.First(&bklDocument, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "BKL tidak ditemukan"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal mengambil data BKL", "error": err.Error()})
+		}
+
+		return
+	}
+
+	// Delete Item
+	if err := tx.
+		Where("bkl_document_id = ?", bklDocument.ID).
+		Delete(&models.BklItem{}).Error; err != nil {
+
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Terjadi keslahan",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	//save item
+	if payload.DamageQty != nil {
+		item := models.BklItem{
+			BklDocumentID: bklDocument.ID,
+			Qty:           *payload.DamageQty,
+			Type:          payload.Type,
+			IsDamaged:     true,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item", "error": err.Error()})
+			return
+		}
+	}
+
+	for _, item := range payload.Colors {
+		item := models.BklItem{
+			BklDocumentID: bklDocument.ID,
+			TagColorID:    &item.ColorTagID,
+			Qty:           item.Qty,
+			Type:          payload.Type,
+			IsDamaged:     false,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item"})
+			return
+		}
+	}
+
+
+	if err := tx.Model(&bklDocument).Update("status", "done").Error; err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal mengupdate status BKL",
+			"error": err.Error(),
+		})
+		tx.Rollback()
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Terjadi Kesalahan", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true, 
+		"message": "BKL Berhasil Diupdate",
+		"resource": bklDocument,
+	})
+}
+
