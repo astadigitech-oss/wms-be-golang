@@ -107,12 +107,11 @@ func DetailDocument(c *gin.Context) {
 	var productOlds []models.ProductOld
 	var total int64
 
-	db := config.DB.Model(&models.ProductOld{})
+	db := config.DB.Model(&models.ProductOld{}).Where("code_document = ?", code_document)
 	if query != "" {
-		db = db.
-			Where("code_document = ?", code_document).
-			Where(
-				"(old_barcode_product LIKE ? OR old_name_product LIKE ?)","%"+query+"%", "%"+query+"%",)
+		db = db.Where(
+			"(old_barcode_product LIKE ? OR old_name_product LIKE ?)", "%"+query+"%", "%"+query+"%",
+		)
 	}
 
 	// TOTAL COUNT (for pagination info)
