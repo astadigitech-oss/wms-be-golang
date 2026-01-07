@@ -139,7 +139,11 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
 		protected.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
 		//Damaged
-		protected.GET("/products/damage", controllers.GetProductDamaged) //ProductController.go
+		protected.GET("/products/damaged", controllers.GetProductDamaged) //ProductController.go
+		protected.PUT("/products/damaged/:product_id/to-display", controllers.DamagedToDisplay) //ProductController.go
+		//Non
+		protected.GET("/products/non", controllers.GetProductNon) //ProductController.go
+		protected.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
 
 		/* ==================== ACCOUNT ==================== */
 		//Account Setting

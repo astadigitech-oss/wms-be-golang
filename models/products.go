@@ -15,7 +15,7 @@ type Product struct {
 	Quantity      int64      `gorm:"not null" json:"quantity"`
 	Price         float64    `gorm:"type:decimal(18,2); not null" json:"price"`
 	Status        string     `gorm:"type:enum('display','expired','promo','bundle','repair','palet','dump','sale','migrate','bkl','scrap_qcd','slow_moving');size:50;not null" json:"status"`       // enum
-	Quality       string     `gorm:"type:enum('lolos','abnormal','damaged');default:'lolos';size:50;not null" json:"quality"`      // enum
+	Quality       string     `gorm:"type:enum('lolos','abnormal','damaged','non');default:'lolos';size:50;not null" json:"quality"`      // enum
 	QualityText   *string     `gorm:"type:text" json:"quality_text"`
 	CategoryID    *uint64     `gorm:"index" json:"category_id"`
 	TagColorID    *uint64     `gorm:"index" json:"tag_color_id"`
