@@ -28,8 +28,7 @@ type RiwayatCheckUpdateData struct {
 // ProductApprove menangani alur persetujuan produk baru.
 func ProductApprove(c *gin.Context) {
     // Tangkap user id
-    userID, _ := c.Get("user_id")
-    userIDUint := userID.(uint) 
+    user := c.MustGet("auth_user").(models.User)
     product_old_id := c.Param("product_old_id")
 
     // Validator payload (di sini juga terjadi paralelisme non-DB)
@@ -127,7 +126,7 @@ func ProductApprove(c *gin.Context) {
         if document.CustomBarcode != nil {
             customeBarcode = *document.CustomBarcode
         }
-        barcode, err := helpers.GenerateUniqueBarcode(config.DB, userIDUint, customeBarcode)
+        barcode, err := helpers.GenerateUniqueBarcode(config.DB, user.ID, customeBarcode)
         if err != nil {
             errChan <- helpers.NewCustomError(http.StatusInternalServerError, "failed to generate barcode", err)
             return
@@ -235,7 +234,7 @@ func ProductApprove(c *gin.Context) {
     }
     
     // 2. SEQUENTIAL WRITE: Update User Scan Web
-    if err := updateOrCreateDailyScan(tx, userIDUint, payload.CodeDocument); err != nil {
+    if err := updateOrCreateDailyScan(tx, user.ID, payload.CodeDocument); err != nil {
         tx.Rollback()
         c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to create or update user scan", "error": err.Error()})
         return
@@ -426,17 +425,7 @@ func AddProductManual(c *gin.Context) {
         return
     }
 
-    userID, _ := c.Get("user_id")
-    var user models.User
-    if err := config.DB.Where("id = ?", userID).First(&user).Error; err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-            return
-        }else {
-            c.JSON(500, gin.H{"status": false, "error": err.Error()})
-            return
-        }
-    }
+    user := c.MustGet("auth_user").(models.User)
 
     tx := config.DB.Begin()
 
@@ -833,17 +822,7 @@ func StaggingProductUpdate(c *gin.Context) {
         OldPriceProduct    float64 `json:"old_price_product" binding:"required,gt=0"`
     }
 
-    userID, _ := c.Get("user_id")
-    var user models.User
-    if err := config.DB.Preload("Role").Where("id = ?", userID).First(&user).Error; err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-            return
-        }else {
-            c.JSON(500, gin.H{"status": false, "error": err.Error()})
-            return
-        }
-    }
+    user := c.MustGet("auth_user").(models.User)
 
     productID, err := strconv.ParseUint(c.Param("product_id"), 10, 64)
     if err != nil {
@@ -1790,21 +1769,46 @@ func GetProductsStatusDisplayExpired(c *gin.Context) {
 
 func ProductToDump(c *gin.Context) {
     // Definisikan struct untuk request
-    // var input struct {
-    //     SourceType string `json:"source_type" binding:"required"`
+    // type input struct {
+    //     Source string `json:"source" binding:"required,oneof=staging display migrate"`
     // }
 
-    // if err := c.ShouldBindJSON(&input); err != nil {
-    //     c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "source_type wajib diisi", "error":err.Error()})
-    //     return
-    // }
+    // var payload input
+	// if err := c.ShouldBindJSON(&payload); err != nil {
+	// 	ve, ok := err.(validator.ValidationErrors)
+	// 	if !ok {
+	// 		c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+	// 		return
+	// 	}
+	// 	errors := make(map[string]string)
+	// 	for _, e := range ve {
+	// 		field := strings.ToLower(e.Field())
+
+	// 		switch field {
+	// 			case "source":
+	// 				if e.Tag() == "required" {
+	// 					errors["source"] = "Source wajib diisi"
+	// 				}else {
+    //                     errors["source"] = "Source tidak valid, hanya diperbolehkan staging, display, migrate"
+    //                 }
+	// 		}
+	// 	}
+
+	// 	c.JSON(http.StatusBadRequest, gin.H{
+	// 		"status": false,
+	// 		"message": "Validasi gagal",
+	// 		"errors": errors,
+	// 	})
+		
+	// 	return
+	// }
 
     //Cek apakah source_type adalah 'product'
     // if input.SourceType != "product" {
     //     c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Hanya tipe 'product' yang diizinkan"})
     //     return
     // }
-
+        
     barcode := c.Param("barcode")
     result := config.DB.Model(&models.Product{}).
         Where("barcode = ?", barcode).Update("status", "dump")
@@ -1844,18 +1848,7 @@ func DeleteProductInventory(c *gin.Context) {
     }
 
     id := c.Param("id")
-    userID, _ := c.Get("user_id")
-
-    // Ambil data user
-    var user models.User
-    if err := config.DB.Select("id", "name").First(&user, userID).Error; err != nil {
-        status := http.StatusInternalServerError
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            status = http.StatusForbidden
-        }
-        c.JSON(status, gin.H{"success": false, "message": "user not found"})
-        return
-    }
+    user := c.MustGet("auth_user").(models.User)
 
     // Ambil data produk (Di luar transaksi untuk efisiensi)
     var product models.Product

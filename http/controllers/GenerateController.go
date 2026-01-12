@@ -375,17 +375,10 @@ func MapAndMergeHeaders(c *gin.Context) {
     }
 
     // create riwayat_check (RiwayatCheck)
-    userID, exists := c.Get("user_id")
-    if !exists {
-        tx.Rollback()
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "claim token tidak tidak valid"})
-        return
-    }
-
-    uid := userID.(uint)
+    user := c.MustGet("auth_user").(models.User)
 
     riwayat := models.RiwayatCheck{
-        UserID:                uid,
+        UserID:                user.ID,
         CodeDocument:          req.CodeDocument,
         NameDocument:          doc.NameDocument,
         TotalData:             int(doc.TotalRowData),
@@ -419,7 +412,7 @@ func MapAndMergeHeaders(c *gin.Context) {
     // log user action (implement function sesuai kebutuhan)
     nameUser, _ := c.Get("username")
     metadata := map[string]interface{}{}
-    if err := helpers.LogUserAction(uid, nameUser.(string), "Upload inbound batch " + req.CodeDocument, "inbound/data_process/data_input", metadata); err != nil {
+    if err := helpers.LogUserAction(user.ID, nameUser.(string), "Upload inbound batch " + req.CodeDocument, "inbound/data_process/data_input", metadata); err != nil {
         // non-fatal — hanya log
         log.Printf("warn: logUserAction failed: %v", err)
         return

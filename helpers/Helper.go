@@ -185,8 +185,8 @@ func GenerateCodeDocument(db *gorm.DB) (string, error) {
 		var count int64
 		err := db.
 			WithContext(context.Background()).
-			Model(&models.Product{}).
-			Where("barcode = ?", barcode).
+			Model(&models.Document{}).
+			Where("code = ?", barcode).
 			Count(&count).
 			Error
 
@@ -201,14 +201,17 @@ func GenerateCodeDocument(db *gorm.DB) (string, error) {
 	}
 
 	// --- jika gagal setelah banyak percobaan ---
-	return "", errors.New("failed to generate unique barcode after max retries")
+	return "", errors.New("failed to generate unique code after max retries")
 }
 
-func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
+func GenerateCodeMigrateRepair(db *gorm.DB) (string, error) {
 	const (
-		length   = 5
-		maxRetry = 10
+		length   = 4
+		maxRetry = 5
 	)
+
+	now := time.Now()
+	datePart := fmt.Sprintf("%02d%02d%04d", now.Day(), int(now.Month()), now.Year())
 
 	//ambil MAX(id)
 	// var nextID int64
@@ -218,6 +221,41 @@ func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	// if err != nil {
 	// 	return "", err
 	// }
+
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+
+		// --- generate random alphanumeric ---
+		random := RandomString(length)
+		barcode := fmt.Sprintf("%s%s", datePart, random)
+
+		// --- cek apakah barcode sudah ada di DB ---
+		var count int64
+		err := db.
+			WithContext(context.Background()).
+			Model(&models.MigrateRepairDocument{}).
+			Where("code = ?", barcode).
+			Count(&count).
+			Error
+
+		if err != nil {
+			return "", err
+		}
+
+		// --- jika belum digunakan, selesai ---
+		if count == 0 {
+			return barcode, nil
+		}
+	}
+
+	// --- jika gagal setelah banyak percobaan ---
+	return "", errors.New("failed to generate unique code after max retries")
+}
+
+func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
+	const (
+		length   = 5
+		maxRetry = 10
+	)
 
 	for attempt := 1; attempt <= maxRetry; attempt++ {
 

@@ -61,6 +61,8 @@ var Tables = []interface{}{
 	&models.SoColor{},
 	&models.BklDocument{},
 	&models.BklItem{},
+	&models.MigrateRepairDocument{},
+	&models.MigrateRepairItem{},
 }
 
 

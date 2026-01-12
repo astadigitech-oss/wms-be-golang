@@ -21,8 +21,7 @@ import (
 )
 
 func ImportBulkingCategory(c *gin.Context) {
-    userID, _ := c.Get("user_id")
-    userIDUint := userID.(uint) 
+    user := c.MustGet("auth_user").(models.User)
     file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -44,7 +43,7 @@ func ImportBulkingCategory(c *gin.Context) {
     tempPath := fmt.Sprintf("uploads/expedisiData/%s", file.Filename)
     c.SaveUploadedFile(file, tempPath)
 
-    code_document, colCount, rowCount, err := processBulkingExcel(tempPath, userIDUint, file.Filename)
+    code_document, colCount, rowCount, err := processBulkingExcel(tempPath, user.ID, file.Filename)
     if err != nil {
         c.JSON(http.StatusUnprocessableEntity, gin.H{
             "success": false,

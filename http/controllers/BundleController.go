@@ -173,19 +173,7 @@ func AddProductBundle(c *gin.Context) {
 
 	bundleID, _ := strconv.ParseUint(bundle_id, 10, 64)
 	productID, _ := strconv.ParseUint(product_id, 10, 64)
-	userID, _ := c.Get("user_id")
-
-	//get data user
-    var user models.User
-    if err := config.DB.Where("id = ?", userID).First(&user).Error; err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-            return
-        }else {
-            c.JSON(500, gin.H{"status": false, "error": err.Error()})
-            return
-        }
-    }
+	user := c.MustGet("auth_user").(models.User)
 
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
 	if tx.Error != nil {
@@ -310,19 +298,7 @@ func DeleteProductBundle(c *gin.Context) {
 
 	bundleID, _ := strconv.ParseUint(bundle_id, 10, 64)
 	productID, _ := strconv.ParseUint(product_id, 10, 64)
-	userID, _ := c.Get("user_id")
-
-	//get data user
-    var user models.User
-    if err := config.DB.Where("id = ?", userID).First(&user).Error; err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-            return
-        }else {
-            c.JSON(500, gin.H{"status": false, "error": err.Error()})
-            return
-        }
-    }
+	user := c.MustGet("auth_user").(models.User)
 
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
 	if tx.Error != nil {
@@ -432,17 +408,7 @@ func DeleteProductBundle(c *gin.Context) {
 }
 
 func CreateBundleProduct(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-    var user models.User
-    if err := config.DB.Preload("Role").Where("id = ?", userID).First(&user).Error; err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-            return
-        }else {
-            c.JSON(500, gin.H{"status": false, "error": err.Error()})
-            return
-        }
-    }
+	user := c.MustGet("auth_user").(models.User)
 
     type payloadRequest struct {
         NameBundle string  `json:"name_bundle" binding:"required"`
@@ -669,12 +635,7 @@ func CreateBundleProduct(c *gin.Context) {
 
 func UpdateBundle(c *gin.Context) {
 	bundle_id := c.Param("bundle_id")
-	userID, _ := c.Get("user_id")
-    var user models.User
-    if err := config.DB.Preload("Role").First(&user, userID).Error; err != nil {
-        c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-        return
-    }
+	user := c.MustGet("auth_user").(models.User)
 
     type payloadRequest struct {
         NameBundle string  `json:"name_bundle" binding:"required"`
@@ -1023,17 +984,7 @@ func BundleDeleteFilterProduct(c *gin.Context) {
 
 func Unbundle(c *gin.Context) {
 	bundle_id := c.Param("bundle_id")
-	userID, _ := c.Get("user_id")
-    var user models.User
-    if err := config.DB.Preload("Role").Where("id = ?", userID).First(&user).Error; err != nil {
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-            return
-        }else {
-            c.JSON(500, gin.H{"status": false, "error": err.Error()})
-            return
-        }
-    }
+	user := c.MustGet("auth_user").(models.User)
 
 	type payloadRequest struct {
         BundleType string  `json:"bundle_type" binding:"required,oneof=bundle repair qcd"`
@@ -1250,13 +1201,7 @@ func GetRepairFilterProduct(c *gin.Context) {
 
 func DumpProductRepair(c *gin.Context) {
 	item_id := c.Param("item_id")
-	userID, _ := c.Get("user_id")
-
-    var user models.User
-    if err := config.DB.Preload("Role").First(&user, userID).Error; err != nil {
-        c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "user not found"})
-        return
-    }
+	user := c.MustGet("auth_user").(models.User)
 
 	//start transaction
 	tx := config.DB.WithContext(c.Request.Context()).Begin()

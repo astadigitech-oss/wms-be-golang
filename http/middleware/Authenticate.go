@@ -65,9 +65,16 @@ func AuthCheck() gin.HandlerFunc {
 			config.DB.Model(&userToken).Update("last_used_at", time.Now())
 		}()
 
-		c.Set("user_id", uint(claims["user_id"].(float64)))
-		c.Set("username", claims["username"])
-		c.Set("role", claims["role"])
+		var user models.User
+		if err := config.DB.First(&user, claims["user_id"]).Error; err != nil {
+			c.AbortWithStatusJSON(403, gin.H{
+				"status": false,
+				"message": "user not found",
+			})
+			return
+		}
+
+		c.Set("auth_user", user)
 		c.Next()
 	}
 }

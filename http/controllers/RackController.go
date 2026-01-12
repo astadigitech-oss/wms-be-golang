@@ -246,12 +246,7 @@ func ProductBySourceRack(c *gin.Context) {
 }
 
 func AddRack(c *gin.Context) {
-	userIDAny, _ := c.Get("user_id")
-	userID, ok := userIDAny.(uint)
-	if !ok {
-		c.JSON(500, gin.H{"status": false, "message": "Invalid user id"})
-		return
-	}
+	user := c.MustGet("auth_user").(models.User)
 
 	type payloadRequest struct {
 		DisplayRackID  uint   `json:"display_rack_id" binding:"required"`
@@ -316,7 +311,7 @@ func AddRack(c *gin.Context) {
 	prefix := fmt.Sprintf(
 		"%s%d-%s",
 		strings.ToUpper(payload.Source[:1]),
-		userID,
+		user.ID,
 		parentRack.Name,
 	)
 
@@ -343,7 +338,7 @@ func AddRack(c *gin.Context) {
 		DisplayRackID: &displayRackID,
 		Name:          finalName,
 		Source:       "staging",
-		Barcode:      fmt.Sprintf("S%d-%s", userID, barcode),
+		Barcode:      fmt.Sprintf("S%d-%s", user.ID, barcode),
 	}
 
 	if err := config.DB.Create(&rack).Error; err != nil {
@@ -366,12 +361,7 @@ func AddRack(c *gin.Context) {
 }
 
 func UpdateRack(c *gin.Context) {
-	userIDAny, _ := c.Get("user_id")
-	userID, ok := userIDAny.(uint)
-	if !ok {
-		c.JSON(500, gin.H{"status": false, "message": "Invalid user id"})
-		return
-	}
+	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
 	if err != nil {
 		c.JSON(400, gin.H{"message": "rack_id tidak valid"})
@@ -444,7 +434,7 @@ func UpdateRack(c *gin.Context) {
 			return
 		}
 
-		prefix := fmt.Sprintf("S%d-%s", userID, parentRack.Name)
+		prefix := fmt.Sprintf("S%d-%s", user.ID, parentRack.Name)
 		var latestRack models.Rack
 		config.DB.Where("source = ? AND name LIKE ?", "staging", prefix+"%").
 			Order("LENGTH(name) DESC").
