@@ -107,7 +107,16 @@ func DetailDocument(c *gin.Context) {
 	var productOlds []models.ProductOld
 	var total int64
 
-	db := config.DB.Model(&models.ProductOld{}).Where("code_document = ?", code_document)
+	db := config.DB.Model(&models.ProductOld{}).
+		Where(`
+			NOT EXISTS (
+				SELECT 1 
+				FROM products 
+				WHERE products.product_old_id = product_olds.id
+			)
+		`).
+		Where("product_olds.code_document = ?", code_document)
+		
 	if query != "" {
 		db = db.Where(
 			"(old_barcode_product LIKE ? OR old_name_product LIKE ?)", "%"+query+"%", "%"+query+"%",
