@@ -198,13 +198,30 @@ func SearchProductOld(c *gin.Context)  {
 	var productOld models.ProductOld
 
 	// Query ProductOld
-	err := config.DB.Where("code_document = ?", code_document).Where("old_barcode_product", barcode).First(&productOld).Error
+	err := config.DB.Where("code_document = ?", code_document).
+		Where(`
+			NOT EXISTS (
+				SELECT 1 
+				FROM products 
+				WHERE products.product_old_id = product_olds.id
+			)
+		`).
+		Where("old_barcode_product = ?", barcode).First(&productOld).Error
 
 	if err != nil {
-		c.JSON(404, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{
+				"success": false,
+				"message": "Product old not found",
+			})
+			return
+		}else {
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "server error: " + err.Error(),
+			})
+		}
+
 		return
 	}
 
@@ -704,17 +721,8 @@ func GenerateBKLCode(c *gin.Context) {
 		}
 	}()
 
-	// AMBIL USER ID DARI CONTEXT
-	userIDAny, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status":  false,
-			"message": "Unauthorized",
-		})
-		return
-	}
-
-	userID := userIDAny.(uint)
+	// AMBIL USER 
+	user := c.MustGet("auth_user").(models.User)
 
 	// AMBIL DOKUMEN TERAKHIR
 	var lastDoc models.BklDocument
@@ -735,7 +743,7 @@ func GenerateBKLCode(c *gin.Context) {
 	}
 
 	// GENERATE CODE
-	generatedCode := fmt.Sprintf("%d-BKL-%06d", userID, nextSequence)
+	generatedCode := fmt.Sprintf("%d-BKL-%06d", user.ID, nextSequence)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  true,
@@ -874,17 +882,8 @@ func CreateBKL(c *gin.Context) {
 		return
 	}
 
-	// AMBIL USER ID
-	userIDAny, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": false,
-			"message": "Unauthorized",
-		})
-		return
-	}
-
-	userID := userIDAny.(uint)
+	// AMBIL USER 
+	user := c.MustGet("auth_user").(models.User)
 
 	// TRANSACTION
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
@@ -908,7 +907,7 @@ func CreateBKL(c *gin.Context) {
 	document := models.BklDocument{
 		CodeBkl: payload.NameDocument,
 		Status:  "done",
-		UserID:  uint64(userID),
+		UserID:  uint64(user.ID),
 	}
 
 	if err := tx.Create(&document).Error; err != nil {
@@ -1169,3 +1168,827 @@ func UpdateBKL(c *gin.Context) {
 	})
 }
 
+// ===================== Migrate To Repair ====================
+func ListMigrateRepairDocs(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 15
+	offset := (page - 1) * limit
+
+	var migrate_repair_docs []models.MigrateRepairDocument
+	query := config.DB.Model(&models.MigrateRepairDocument{})
+
+	if q != "" {
+		searchQuery := "%" + q + "%"
+		query = query.Where("(code LIKE ? OR name_user LIKE ?)", searchQuery, searchQuery)
+	}
+
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":  false,
+			"message": "Terjadi kesalahan",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := query.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&migrate_repair_docs).Error; err != nil {
+		
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":  false,
+			"message": "Terjadi kesalahan",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	// FINAL RESPONSE
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Document Migrate Repair",
+			"resource": gin.H{
+				"current_page":   page,
+				"data":           migrate_repair_docs,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + int(total),
+				"total":          total,
+			},
+		},
+	})
+}
+
+func DetailMigrateRepairDocs(c *gin.Context) {
+	id := c.Param("id")
+
+	var migrate_repair_doc models.MigrateRepairDocument
+	if err := config.DB.Preload("MigrateRepairItem", func(db *gorm.DB) *gorm.DB {
+		return db.
+            Joins("JOIN products ON products.id = migrate_repair_items.product_id").
+            Where("products.status NOT IN ?", []string{"dump", "scrap_qcd"}).
+            Preload("Product")
+	}).First(&migrate_repair_doc, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"message": "Migrate repair dokumen tidak ditemukan",
+			})
+		}else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "Terjadi kesalahan",
+				"error":   err.Error(),
+			})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Detail Document Migrate Repair",
+		"resource": migrate_repair_doc,
+	})
+}
+
+func ListMigrateProducts(c *gin.Context) {
+    q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	//inisialisasi query
+	baseQuery := config.DB.Model(&models.Product{}).
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+        Where("products.status IN ?", []string{"display", "expired"}).
+        Where("products.category_id IS NOT NULL").
+        Where("products.tag_color_id IS NULL").
+        Where("products.quality = ?", "lolos").
+        Where("(categories.name_category LIKE ?)", "%"+ "ELEKTRONIK" +"%")
+
+	// Searching (misalnya, mencari berdasarkan nama atau email)
+	if q != "" {
+		searchPattern := "%" + q + "%"
+		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
+            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.name LIKE ?)", searchPattern, searchPattern, searchPattern)
+	}
+
+    // Paginate Data
+    type productsData struct {
+        ID          uint64  `json:"id"`
+        OldBarcode  string  `json:"old_barcode"`
+        NewBarcode     string  `json:"new_barcode"`
+        Name        string  `json:"name"`
+        Price       float64 `json:"price"`
+        OldPrice       float64 `json:"old_price"`
+        Status      string  `json:"status"`
+        Category   *string  `json:"category"`
+    }
+
+    var products []productsData
+	var totalData int64
+
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
+    // Ambil data detail
+    err := baseQuery.Session(&gorm.Session{}).
+        Select(`
+            products.id, 
+            product_olds.old_barcode_product AS old_barcode, 
+            products.barcode AS new_barcode, 
+            products.name AS name, 
+            products.price AS price, 
+            product_olds.old_price_product AS old_price, 
+            products.status AS status, 
+            COALESCE(color_tags.name_color, categories.name_category) AS category
+        `).
+        Order("products.created_at DESC").
+        Limit(limit).Offset(offset).
+        Find(&products).Error
+
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+        return
+    }
+
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Migrate Product",
+			"resource": gin.H{
+                "total_data":           totalData,
+                "data":                 products,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + int(totalData),
+				"total":          totalData,
+			},
+		},
+	})
+}
+
+func AddMigrateProduct(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+
+	type payloadRequest struct {
+		Barcode     string `json:"barcode" binding:"required"`
+		Description string `json:"description" binding:"required,min=3"`
+	}
+
+	var payload payloadRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errorsMap := make(map[string]string)
+
+		for _, e := range ve {
+			field := e.Field()
+			// direct fields mapping
+			switch field {
+			case "Description":
+				if e.Tag() == "required" {
+					errorsMap["description"] = "Deskripsi wajib diisi"
+				} else if e.Tag() == "min" {
+					errorsMap["description"] = "Deskripsi minimal 3 karakter"
+				}
+			case "Barcode":
+				if e.Tag() == "required" {
+					errorsMap["barcode"] = "Barcode wajib diisi"
+				}
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+	// TRANSACTION
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	var product models.Product
+	if err := tx.Preload("Category").Preload("ProductOld").
+		Where("category_id IS NOT NULL").
+		Where("barcode = ?", payload.Barcode).
+		Where("quality = ?", "lolos").
+		Where("status IN ?", []string{"display", "expired"}).
+		First(&product).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  false,
+				"message": "Product not found",
+			})
+		}else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Internal server error",
+				"error":   err.Error(),
+			})
+		}
+		tx.Rollback()
+		return
+	}
+
+	if !strings.Contains(strings.ToUpper(product.Category.NameCategory), "ELEKTRONIK") {
+		tx.Rollback()
+		c.JSON(422, gin.H{
+			"errors": gin.H{
+				"barcode": []string{
+					"Scan Gagal! Bukan kategori ELEKTRONIK.",
+				},
+			},
+		})
+		return
+	}
+
+	var migrateRepair models.MigrateRepairDocument
+
+	err := tx.
+		Where("user_id = ? AND status = ?", user.ID, "process").
+		First(&migrateRepair).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// data belum ada → create
+			code, err := helpers.GenerateCodeMigrateRepair(tx)
+			if err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{
+					"status": false,
+					"message": "Gagal membuat kode migrate repair",
+					"error": err.Error(),
+				})
+				return
+			}
+
+			migrateRepair = models.MigrateRepairDocument{
+				UserID:        uint64(user.ID),
+				NameUser:      user.Name,
+				Status:        "process",
+				Code:         code,
+			}
+
+			if err := tx.Create(&migrateRepair).Error; err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{
+					"success": false,
+					"message": "Gagal membuat data migrate repair",
+					"error": err.Error(),
+				})
+				return
+			}
+		} else {
+			// error lain (DB error)
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Gagal mengambil data migrate repair",
+				"error": err.Error(),
+			})
+			return
+		}
+	}
+
+	migrate_item := models.MigrateRepairItem{
+		RepairDocumentID: migrateRepair.ID,
+		ProductID:       product.ID,
+	}
+
+	if err := tx.Create(&migrate_item).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal membuat data migrate repair item",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	rackID := product.RackID
+	if err := tx.Model(&product).Updates(map[string]interface{}{
+		"status": "migrate",
+		"quality": "migrate",
+		"rack_id": nil,
+		"quality_text": payload.Description,
+	}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal memperbarui status produk",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if rackID != nil {
+		result := tx.Model(&models.Rack{}).Where("id = ?", rackID).Updates(map[string]interface{}{
+			"total_data":                    gorm.Expr("total_data - ?", 1),
+			"total_new_price_product":      gorm.Expr("total_new_price_product - ?", product.Price),
+			"total_old_price_product":      gorm.Expr("total_old_price_product - ?", product.ProductOld.OldPriceProduct),
+			"total_display_price_product":  gorm.Expr("total_display_price_product - ?", product.DisplayPrice),
+		})
+
+		if result.RowsAffected == 0 {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"success": false,
+				"message": "Rak tidak ditemukan atau tidak berubah",
+			})
+			return
+		}
+	}
+
+	// ✅ Commit
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Commit gagal",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(201, gin.H{"success": true, "message": "Product migrated successfully"})
+}
+
+func MigrateRepairDone(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+
+	// TRANSACTION
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+
+	var migrateRepair models.MigrateRepairDocument
+	if err := tx.
+		Where("user_id = ? AND status = ?", user.ID, "process").
+		First(&migrateRepair).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"success": false,
+				"message": "Tidak ada dokumen aktif untuk diselesaikan!",
+			})
+
+			return
+		} else {
+			// error lain (DB error)
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Gagal mengambil data migrate repair",
+				"error": err.Error(),
+			})
+			return
+		}
+	}
+
+	if err := tx.Model(&migrateRepair).Update("status", "added").Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal memperbarui status migrate repair",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// ✅ Commit
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Commit gagal",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(201, gin.H{"success": true, "message": "Migrasi selesai!"})
+}
+
+func MigrateProductUpdate(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+    item_id := c.Param("item_id")
+
+    type payloadRequest struct {
+        NewNameProduct     string  `json:"new_name_product" binding:"required"`
+        NewQuantityProduct int     `json:"new_quantity_product" binding:"required,gt=0"`
+        NewPriceProduct    float64 `json:"new_price_product" binding:"required,gt=0"`
+        CategoryID         *uint64  `json:"category_id"`
+        TagColorID         *uint64  `json:"tag_color_id"`
+        OldPriceProduct    float64 `json:"old_price_product" binding:"required,gt=0"`
+    }
+
+    var payload payloadRequest
+    if err := c.ShouldBindJSON(&payload); err != nil {
+        ve, ok := err.(validator.ValidationErrors)
+        if !ok {
+            c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+            return
+        }
+
+        errors := make(map[string]string)
+        for _, e := range ve {
+            field := strings.ToLower(e.Field())
+
+            switch field {
+                case "newnameproduct":
+                    errors["new_name_product"] = "Nama produk baru wajib diisi"
+                case "newquantityproduct":
+                    if e.Tag() == "required" {
+                        errors["new_quantity_product"] = "Jumlah produk wajib diisi"
+                    } else {
+                        errors["new_quantity_product"] = "Jumlah harus lebih besar dari 0"
+                    }
+                case "newpriceproduct":
+                    if e.Tag() == "required" {
+                        errors["new_price_product"] = "Harga baru wajib diisi"
+                    } else {
+                        errors["new_price_product"] = "Harga harus lebih besar dari 0"
+                    }
+                case "oldpriceproduct":
+                    if e.Tag() == "required" {
+                        errors["old_price_product"] = "Harga lama wajib diisi"
+                    } else {
+                        errors["old_price_product"] = "Harga lama harus lebih besar dari 0"
+                    }
+            }
+        }
+
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": false,
+            "message": "Validasi gagal",
+            "errors": errors,
+        })
+        return
+    }
+
+	if payload.OldPriceProduct < 100000 {
+		c.JSON(400, gin.H{"success": false, "message": "old price product tidak boleh kurang dari 100k"})
+		return
+	}
+
+    tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+	// Pastikan Rollback dipanggil jika ada panic atau error di tengah proses
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error occurred and transaction rolled back"})
+            return
+		}
+	}()
+
+    //load data item
+    var repair_item models.MigrateRepairItem
+    if err := tx.First(&repair_item, item_id).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Migrate repair item tidak ditemukan"})
+        } else {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to query migrate repair item", "error": err.Error()})
+        }
+
+        tx.Rollback()
+        return
+    }
+
+	//load data product
+	var product models.Product
+	if err := tx.Preload("ProductOld").First(&product, repair_item.ProductID).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"success":false, "message": "data product tidak ditemukan pada item ini"})
+		}else {
+			c.JSON(404, gin.H{"success":false, "message": "failed to query product", "error": err.Error()})
+		}
+
+		return
+	}
+
+    // create update data
+    updateData := map[string]interface{}{
+        "name": payload.NewNameProduct,
+        "quantity": payload.NewQuantityProduct,
+    }
+
+    var discount float64
+	if payload.CategoryID == nil {
+		tx.Rollback()
+		c.JSON(400, gin.H{"status": false, "message": "Total price >= 100rb, wajib pilih kategori"})
+		return
+	}
+
+	var category models.Category
+	if err := tx.First(&category, payload.CategoryID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(404, gin.H{"status": false, "message": "Category tidak ditemukan", "error": err.Error()})
+		return
+	}
+
+	discount = payload.OldPriceProduct * (float64(category.DiscountCategory)/100.0)
+	discount = math.Round(discount)
+	if discount > category.MaxPriceCategory {
+		discount = category.MaxPriceCategory
+	} 
+
+	calculatedPrice := payload.OldPriceProduct - discount
+	if math.Round(calculatedPrice) != math.Round(payload.NewPriceProduct) {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Harga setelah diskon kategori tidak sesuai. Harap periksa kembali."})
+		return
+	}
+
+	updateData["price"] = calculatedPrice
+	updateData["category_id"] = category.ID
+	updateData["tag_color_id"] = nil
+	updateData["display_price"] = calculatedPrice
+
+	metadata := map[string]interface{}{
+		"before_edit": map[string]interface{}{
+			"name_product": product.Name,
+			"price_product": product.Price,
+			"old_price_product": product.ProductOld.OldPriceProduct,
+			"category_id": product.CategoryID,
+		},
+		"after_edit": map[string]interface{}{
+			"name_product": payload.NewNameProduct,
+			"price_product": payload.NewPriceProduct,
+			"old_price_product": payload.OldPriceProduct,
+			"category_id": payload.CategoryID,
+		},
+	}
+
+    if err := tx.Model(&product).Updates(updateData).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
+        return
+    }
+
+    if err := tx.Model(&models.ProductOld{}).
+        Where("id = ?", product.ProductOldID).
+        Update("old_price_product", payload.OldPriceProduct).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal update data product old", "error": err.Error()})
+        return
+    }
+
+	if err := helpers.LogUserAction(user.ID, user.Name, fmt.Sprintf("Update data product (%s)", product.Barcode), "migrate-to-repair/product/update", metadata); err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "gagal membuat log user action", "error": err.Error()})
+		return
+	}
+
+    if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "status": true,
+        "message": "product berhasil diupdate",
+    })
+
+}
+
+func MigrateProductToDisplay(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+    item_id := c.Param("item_id")
+
+    tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+	// Pastikan Rollback dipanggil jika ada panic atau error di tengah proses
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error occurred and transaction rolled back"})
+            return
+		}
+	}()
+
+	var repair_item models.MigrateRepairItem
+	if err := tx.First(&repair_item, item_id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Migrate repair item tidak ditemukan"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to query migrate repair item", "error": err.Error()})
+		}
+
+        tx.Rollback()
+        return
+    }
+
+	//load data product
+    var product models.Product
+    if err := tx.Where("id = ?", repair_item.ProductID).
+            Where("status = ?", "migrate").
+            Where("quality = ?", "migrate").
+            First(&product).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "product not found"})
+        } else {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to query product", "error": err.Error()})
+        }
+
+        tx.Rollback()
+        return
+    }
+
+    // create update data
+    updateData := map[string]interface{}{
+        "location_type": "main",
+        "status": "display",
+        "quality": "lolos",
+        "quality_text": nil,
+    }
+
+    if err := tx.Model(&product).Updates(updateData).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
+        return
+    }
+
+	if err := tx.Delete(&repair_item).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to delete migrate repair item", "error": err.Error()})
+		return
+	}
+
+	metadata := map[string]interface{}{}
+	if err := helpers.LogUserAction(user.ID, user.Name, fmt.Sprintf("Migrasi product repair %s ke display", product.Barcode), "migrate-to-repair/to-display", metadata); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to log user action", "error": err.Error()})
+		return
+	}
+
+    if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "status": true,
+        "message": "Product berhasil dipindahkan ke display",
+    })
+
+}
+
+func MigrateProductToDump(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+    item_id := c.Param("item_id")
+
+    tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+	// Pastikan Rollback dipanggil jika ada panic atau error di tengah proses
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error occurred and transaction rolled back"})
+            return
+		}
+	}()
+
+	var repair_item models.MigrateRepairItem
+	if err := tx.First(&repair_item, item_id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Migrate repair item tidak ditemukan"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to query migrate repair item", "error": err.Error()})
+		}
+
+        tx.Rollback()
+        return
+    }
+
+	//load data product
+    var product models.Product
+    if err := tx.Where("id = ?", repair_item.ProductID).
+            Where("status = ?", "migrate").
+            Where("quality = ?", "migrate").
+            First(&product).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "product not found"})
+        } else {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to query product", "error": err.Error()})
+        }
+
+        tx.Rollback()
+        return
+    }
+
+    if err := tx.Model(&product).Update("status", "dump").Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
+        return
+    }
+
+	if err := tx.Delete(&repair_item).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to delete migrate repair item", "error": err.Error()})
+		return
+	}
+
+	metadata := map[string]interface{}{}
+	if err := helpers.LogUserAction(user.ID, user.Name, fmt.Sprintf("Migrasi product repair %s ke QCD", product.Barcode), "migrate-to-repair/to-qcd", metadata); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to log user action", "error": err.Error()})
+		return
+	}
+
+    if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "status": true,
+        "message": "Product berhasil dipindahkan ke qcd",
+    })
+
+}

@@ -135,6 +135,13 @@ func RouteHandler(r *gin.Engine) {
 
 		/* ==================== REPAIR STATION ==================== */
 		//Migrate To Repair
+		protected.GET("/migrate-repair-docs", controllers.ListMigrateRepairDocs) //DocumentController.go
+		protected.GET("/migrate-repair-docs/:id", controllers.DetailMigrateRepairDocs) //DocumentController.go
+		protected.GET("/migrate-products", controllers.ListMigrateProducts) //DocumentController.go
+		protected.POST("/migrate-products/add", controllers.AddMigrateProduct) //DocumentController.go
+		protected.PUT("/migrate-repair-docs/items/:item_id/update", controllers.MigrateProductUpdate) //DocumentController.go
+		protected.PUT("/migrate-repair-docs/items/:item_id/to-display", controllers.MigrateProductToDisplay) //DocumentController.go
+		protected.PUT("/migrate-repair-docs/items/:item_id/status-dump", controllers.MigrateProductToDump) //DocumentController.go
 		//Abnormal
 		protected.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
 		protected.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
