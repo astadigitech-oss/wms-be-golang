@@ -66,7 +66,7 @@ func AuthCheck() gin.HandlerFunc {
 		}()
 
 		var user models.User
-		if err := config.DB.First(&user, claims["user_id"]).Error; err != nil {
+		if err := config.DB.Preload("Role").First(&user, claims["user_id"]).Error; err != nil {
 			c.AbortWithStatusJSON(403, gin.H{
 				"status": false,
 				"message": "user not found",

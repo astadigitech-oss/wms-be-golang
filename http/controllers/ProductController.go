@@ -147,6 +147,10 @@ func ProductApprove(c *gin.Context) {
         // determine LocationType rules:
         if old.OldPriceProduct >= 100000 {
             status := "staging"
+            if payload.Quality != "lolos"  {
+                status = "main"
+            }
+
             newProduct.LocationType = &status
             if payload.CategoryID == nil {
                 errChan <- helpers.NewCustomError(400, "Total price >= 100rb, wajib pilih kategori", nil)
@@ -506,6 +510,8 @@ func AddProductManual(c *gin.Context) {
                 })
                 return
             }
+
+            *newProduct.IsSo = "check"
         } 
     } else {
         if payload.TagColorID == nil {
@@ -562,6 +568,8 @@ func AddProductManual(c *gin.Context) {
                 })
                 return
             }
+
+            *newProduct.IsSo = "check"
         }
     }
 
@@ -810,7 +818,7 @@ func StaggingProductDetail(c *gin.Context) {
 	})
 }
 
-func StaggingProductUpdate(c *gin.Context) {
+func UpdateDataProduct(c *gin.Context) {
     type payloadUpdateProduct struct {
         CodeDocument       string  `json:"code_document" binding:"required"`
         NewNameProduct     string  `json:"new_name_product" binding:"required"`
@@ -824,12 +832,7 @@ func StaggingProductUpdate(c *gin.Context) {
 
     user := c.MustGet("auth_user").(models.User)
 
-    productID, err := strconv.ParseUint(c.Param("product_id"), 10, 64)
-    if err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid product ID format"})
-        return
-    }
-    productIDUint := uint(productID)
+    barcode := c.Param("barcode")
 
     var payload payloadUpdateProduct
     if err := c.ShouldBindJSON(&payload); err != nil {
@@ -898,7 +901,11 @@ func StaggingProductUpdate(c *gin.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error occurred and transaction rolled back"})
+			c.JSON(http.StatusInternalServerError, gin.H{
+                "success": false, 
+                "message": "Internal server error occurred and transaction rolled back",
+                "error": fmt.Sprintf("%v", r),
+            })
             return
 		}
 	}()
@@ -906,8 +913,9 @@ func StaggingProductUpdate(c *gin.Context) {
     //cek product
     var product models.Product
     if err := tx.Preload("ProductOld").
-            Where("id = ?", productIDUint).
-            Where("location_type = ?", "staging").
+            Where("barcode = ?", barcode).
+            Where("status IN ?", []string{"display", "expired"}).
+            Where("quality = ?", "lolos").
             Where("staging_stage IS NULL").
             First(&product).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -923,7 +931,7 @@ func StaggingProductUpdate(c *gin.Context) {
     //cek product di apprve queue
     var count int64
     tx.Model(&models.ApproveQueue{}).
-       Where("product_id = ? AND type = ? AND status = ?", productIDUint, "staging", "1").
+       Where("product_id = ? AND type = ? AND status = ?", product.ID, "staging", "1").
        Count(&count)
     if count > 0 {
         tx.Rollback()
@@ -988,12 +996,24 @@ func StaggingProductUpdate(c *gin.Context) {
         },
     }
 
-    if user.Role.RoleName != "Admin" && user.Role.RoleName != "Spv" {
-        tipe := "staging"
+    var actionName, page, tipe string
 
+    if product.LocationType != nil && *product.LocationType == "main" {
+        tipe = "inventory"
+        page = "inventory/product/category/update"
+        actionName = fmt.Sprintf("Edit Product inventory -> barcode: %s", product.Barcode)
+    }else {
+        tipe = "staging"
+        page = "staging/product/update"
+        actionName = fmt.Sprintf("Edit Product staging -> barcode: %s", product.Barcode)
+    }
+
+    if user.Role.RoleName != "Admin" && user.Role.RoleName != "Spv" {
+
+        pID := uint(product.ID)
         approveQueue := models.ApproveQueue{
             UserID: &user.ID,
-            ProductID: &productIDUint,
+            ProductID: &pID,
             Type: &tipe,
             CodeDocument: &payload.CodeDocument,
             OldPriceProduct: &product.ProductOld.OldPriceProduct,
@@ -1014,10 +1034,10 @@ func StaggingProductUpdate(c *gin.Context) {
         approved := "0"
         notification := models.Notification{
             UserID: user.ID,
-            NotificationName: "Edit product staging" + " " +product.Barcode,
+            NotificationName: actionName,
             Role: user.Role.RoleName,
-            Status: "staging",
-            ExternalID: &productIDUint,
+            Status: tipe,
+            ExternalID: &pID,
             Approved: &approved,
         }
 
@@ -1027,7 +1047,7 @@ func StaggingProductUpdate(c *gin.Context) {
             return
         }
     }else {
-        if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {
+        if err := tx.Model(&product).Updates(updateData).Error; err != nil {
             tx.Rollback()
             c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
             return
@@ -1042,7 +1062,7 @@ func StaggingProductUpdate(c *gin.Context) {
         return
     }
 
-    if err := helpers.LogUserAction(user.ID, user.Name, "Edit Product Stagging "+product.Barcode, "staging/product/detail", logDetails); err != nil {
+    if err := helpers.LogUserAction(user.ID, user.Name, actionName, page, logDetails); err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal membuat log user action", "error": err.Error()})
         return
@@ -1056,7 +1076,7 @@ func StaggingProductUpdate(c *gin.Context) {
 
     c.JSON(201, gin.H{
         "status": true,
-        "message": "Product staging berhasil di update",
+        "message": "Product berhasil di update",
     })
     
 }
@@ -1213,45 +1233,190 @@ func DestroyFilterProduct(c *gin.Context) {
 	})
 }
 
-func StaggingMoveToLPR(c *gin.Context) {
+func ProductToDamaged(c *gin.Context) {
+    user := c.MustGet("auth_user").(models.User)
     //payload
-    type StagMoveToLPRPayload struct {
+    type payloadRequest struct {
         Quality string `json:"quality" binding:"required"`
-        QualityText string `json:"quality_text" binding:"required"`
+        Description string `json:"description" binding:"required"`
     }
 
-    var payload StagMoveToLPRPayload
-    if err := c.ShouldBindJSON(&payload); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload", "detail": err.Error()})
+    var payload payloadRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+			return
+		}
+		errors := make(map[string]string)
+		for _, e := range ve {
+			field := strings.ToLower(e.Field())
+
+			switch field {
+				case "quality":
+                    errors["quality"] = "Quality wajib diisi"
+                case "description":
+                    errors["description"] = "Description wajib diisi"
+                default:
+                    errors[field] = "terdapat error pada field ini"
+			}
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": false,
+			"message": "Validasi gagal",
+			"errors": errors,
+		})
+		
+		return
+	}
+
+    if payload.Quality != "damaged" {
+        c.JSON(400, gin.H{"success": false, "message": "quality harus damaged"})
         return
     }
 
-    productID, err := strconv.ParseUint(c.Param("product_id"), 10, 64)
-    if err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid product ID format"})
+    barcode := c.Param("barcode")
+
+    //start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{
+                "success": false, 
+                "message": "Internal server error",
+                "error": fmt.Sprintf("%v", r),
+            })
+        }
+    }()
+
+    var product models.Product
+    if err := tx.Preload("ProductOld").Where("barcode = ?", barcode).
+        Where("status IN ?", []string{"display", "expired"}).
+        Where("quality = ?", "lolos").
+        Where("staging_stage IS NULL").First(&product).Error; err != nil {
+        
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(404, gin.H{"success": false, "message": "product tidak ditemukan"})
+        }else {
+            c.JSON(500, gin.H{"success": false, "message": "failed to update product staging stage", "error": err.Error()})
+        }
+
         return
     }
-    productIDUint := uint(productID)
 
-    result := config.DB.Model(&models.Product{}).
-        Where("id = ?", productIDUint).
-        Where("location_type = ?", "staging").
-        Where("staging_stage IS NULL").
-        Updates(payload)
+    rackID := product.RackID
+    updateProduct := map[string]interface{}{
+        "rack_id": nil,
+        "quality": payload.Quality,
+        "quality_text": payload.Description,
+    }
 
-    if err := result.Error; err != nil {
-        c.JSON(500, gin.H{"success": false, "message": "failed to update product staging stage", "error": err.Error()})
+    if product.CategoryID != nil {
+        // Cek Summary SO Category
+	    var checkSoCategory models.SummarySoCategory
+        if err := tx.Where("type = ?", "process").First(&checkSoCategory).Error; err != nil {
+            if err != gorm.ErrRecordNotFound {
+                tx.Rollback()
+                c.JSON(http.StatusInternalServerError, gin.H{
+                    "status": false,
+                    "message": "Gagal mengambil summary SO category",
+                    "error": err.Error(),
+                })
+                return
+            }
+        }
+
+        if checkSoCategory.ID != 0 {
+            updateSo := map[string]interface{}{
+                "product_damaged":      gorm.Expr("product_damaged + 1"),
+            }
+
+            if product.IsSo != nil && *product.IsSo == "check" {
+                if product.LocationType != nil && *product.LocationType == "main" {
+                    updateSo["product_inventory"] = gorm.Expr("product_inventory - 1")
+                }else {
+                    updateSo["product_staging"] = gorm.Expr("product_staging - 1")
+                }
+            }
+
+            if product.IsSo == nil {
+                updateProduct["is_so"] = "check"
+            }
+
+            if err := tx.Model(&checkSoCategory).Updates(updateSo).Error; err != nil {
+                tx.Rollback()
+                c.JSON(http.StatusInternalServerError, gin.H{
+                    "status": false,
+                    "message": "Gagal memperbarui summary category",
+                    "error": err.Error(),
+                })
+                return
+            }
+        } 
+    }
+
+    // update product to damaged
+    if err := tx.Model(&product).Updates(updateProduct).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Product gagal diupdate",
+            "error": err.Error(),
+        })
         return
     }
 
-    if result.RowsAffected == 0 {
-        c.JSON(404, gin.H{"success": false, "message": "product not found or not eligible to move to LPR"})
+    //update rack
+    if rackID != nil {
+		result := tx.Model(&models.Rack{}).Where("id = ?", rackID).Updates(map[string]interface{}{
+			"total_data":                    gorm.Expr("total_data - ?", 1),
+			"total_new_price_product":      gorm.Expr("total_new_price_product - ?", product.Price),
+			"total_old_price_product":      gorm.Expr("total_old_price_product - ?", product.ProductOld.OldPriceProduct),
+			"total_display_price_product":  gorm.Expr("total_display_price_product - ?", product.DisplayPrice),
+		})
+
+		if result.RowsAffected == 0 {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"success": false,
+				"message": "Rak tidak ditemukan atau tidak berubah",
+			})
+			return
+		}
+	}
+
+    //user log
+    var page string 
+    if *product.LocationType == "main" {
+        page = "Invenvtory/product"
+    }else {
+        page = "Staging/product"
+    }
+
+    actionName := fmt.Sprintf("Mengubah status product menjadi Damaged. Barcode: %s",  product.Barcode)
+    if err := helpers.LogUserAction(user.ID, user.Name, actionName, page, map[string]interface{}{}); err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"success": false, "message": "Gagal membuat user log", "error": err.Error()})
+        return
+    }
+
+    //commit
+    if err := tx.Commit().Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to commit transaction"})
         return
     }
 
     c.JSON(200, gin.H{
         "status": true,
-        "message": "Product berhasil dipindah ke LPR",
+        "message": "Product berhasil diubah ke damaged",
     })
 }
 
@@ -2052,7 +2217,7 @@ func AddPromoProduct(c *gin.Context) {
     defer func() {
         if r := recover(); r != nil {
             tx.Rollback()
-            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error"})
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error", "error": fmt.Sprintf("%v", r)})
         }
     }()
 
@@ -2106,7 +2271,6 @@ func AddPromoProduct(c *gin.Context) {
 }
 
 // ============================= REPAIR STATION =============================
-// Migrate To Repair
 //Abnormal
 func GetProductAbnormal(c *gin.Context) {
     q := strings.TrimSpace(c.Query("q"))
@@ -2347,6 +2511,44 @@ func AbnormalToDisplay(c *gin.Context) {
         updateData["category_id"] = category.ID
         updateData["tag_color_id"] = nil
         updateData["display_price"] = calculatedPrice
+
+        // Cek summary so category
+        if *product.IsSo == "check" {
+            var checkSoCategory models.SummarySoCategory
+            if err := tx.Where("type = ?", "process").First(&checkSoCategory).Error; err != nil {
+                if err != gorm.ErrRecordNotFound {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal mengambil summary SO category",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+
+            if checkSoCategory.ID != 0 {
+                columnLocation := "product_staging"
+                if product.LocationType != nil && *product.LocationType == "main" {
+                    columnLocation = "product_inventory"
+                }
+
+                updateSo := map[string]interface{}{
+                    "product_abnormal":      gorm.Expr("product_abnormal - 1"),
+                    columnLocation :         gorm.Expr(columnLocation+" + 1"),
+                }
+
+                if err := tx.Model(&checkSoCategory).Updates(updateSo).Error; err != nil {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal memperbarui summary category",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            } 
+        }
     }else {
         var color_tag models.ColorTag
         if payload.TagColorID == nil {
@@ -2366,6 +2568,39 @@ func AbnormalToDisplay(c *gin.Context) {
         updateData["category_id"] = nil
         updateData["tag_color_id"] = color_tag.ID
         updateData["display_price"] = color_tag.FixedPriceColor
+
+        // Cek Summary SO Color
+        if *product.IsSo == "check" {
+            var checkSoColor models.SummarySoColor
+            if err := tx.Where("type = ?", "process").First(&checkSoColor).Error; err != nil {
+                if err != gorm.ErrRecordNotFound {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal mengambil summary SO color",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+            // SO COLOR (UPSERT)
+            if checkSoColor.ID != 0 {
+                if err := incrementOrCreateSoColor(
+                    tx,
+                    checkSoColor.ID,
+                    color_tag.NameColor,
+                    "lolos",
+                ); err != nil {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal memperbarui summary SO color",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+        }
     }
 
     if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {
@@ -2635,6 +2870,44 @@ func DamagedToDisplay(c *gin.Context) {
         updateData["category_id"] = category.ID
         updateData["tag_color_id"] = nil
         updateData["display_price"] = calculatedPrice
+
+        // Cek summary so category
+        if *product.IsSo == "check" {
+            var checkSoCategory models.SummarySoCategory
+            if err := tx.Where("type = ?", "process").First(&checkSoCategory).Error; err != nil {
+                if err != gorm.ErrRecordNotFound {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal mengambil summary SO category",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+
+            if checkSoCategory.ID != 0 {
+                columnLocation := "product_staging"
+                if product.LocationType != nil && *product.LocationType == "main" {
+                    columnLocation = "product_inventory"
+                }
+
+                updateSo := map[string]interface{}{
+                    "product_damaged":      gorm.Expr("product_damaged - 1"),
+                    columnLocation :         gorm.Expr(columnLocation+" + 1"),
+                }
+
+                if err := tx.Model(&checkSoCategory).Updates(updateSo).Error; err != nil {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal memperbarui summary category",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            } 
+        }
     }else {
         var color_tag models.ColorTag
         if payload.TagColorID == nil {
@@ -2654,6 +2927,39 @@ func DamagedToDisplay(c *gin.Context) {
         updateData["category_id"] = nil
         updateData["tag_color_id"] = color_tag.ID
         updateData["display_price"] = color_tag.FixedPriceColor
+
+        // Cek Summary SO Color
+        if *product.IsSo == "check" {
+            var checkSoColor models.SummarySoColor
+            if err := tx.Where("type = ?", "process").First(&checkSoColor).Error; err != nil {
+                if err != gorm.ErrRecordNotFound {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal mengambil summary SO color",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+            // SO COLOR (UPSERT)
+            if checkSoColor.ID != 0 {
+                if err := incrementOrCreateSoColor(
+                    tx,
+                    checkSoColor.ID,
+                    color_tag.NameColor,
+                    "lolos",
+                ); err != nil {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal memperbarui summary SO color",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+        }
     }
 
     if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {

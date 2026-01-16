@@ -53,9 +53,9 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/stagging-products", controllers.StaggingProduct) // ProductController.go
 		protected.GET("/stagging/filter-products", controllers.StaggingFilterProduct) // ProductController.go
 		protected.GET("/stagging-products/:product_id/detail", controllers.StaggingProductDetail) // ProductController.go
-		protected.PUT("/stagging-products/:product_id", controllers.StaggingProductUpdate) // ProductController.go
+		protected.PUT("/products/:barcode/update", controllers.UpdateDataProduct) // ProductController.go
 		protected.POST("/stagging/filter-products/:product_id", controllers.AddToFilterStaging) // ProductController.go
-		protected.POST("/stagging/move-to-lpr/:product_id", controllers.StaggingMoveToLPR) // ProductController.go
+		protected.POST("/products/:barcode/to-damaged", controllers.ProductToDamaged) // ProductController.go
 		protected.POST("/stagging-products", controllers.StaggingFilterApprove) // ProductController.go
 		protected.DELETE("/stagging/filter-products/:product_id", controllers.DestroyFilterProduct) // ProductController.go
 		// approvement stagging
@@ -159,6 +159,20 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/users", controllers.CreateUser) //UserController.go
 		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
 		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
+
+		/* ==================== OUTBOUND ==================== */
+		//Buyer
+		protected.GET("monthly-buyer", controllers.GetBuyerMonthlyPoints) //BuyerController.go
+		protected.GET("summary-buyer", controllers.GetBuyerSummary) //BuyerController.go
+		//QCD
+		protected.GET("scraps", controllers.GetScrapDocuments) //DocumentController.go
+		protected.GET("scraps/:scrap_id", controllers.DetailScrapDocuments) //DocumentController.go
+		protected.GET("scrap/product-dumps", controllers.GetProductDumps) //DocumentController.go
+		protected.GET("scrap/session", controllers.GetActiveSession) //DocumentController.go
+		protected.POST("scraps/:scrap_id/scrap-all", controllers.AddAllProductToScrap) //DocumentController.go
+		protected.POST("scraps/:scrap_id/product/:barcode", controllers.AddProductToScrap) //DocumentController.go
+		protected.POST("scraps/:scrap_id/lock", controllers.LockScrapDocument) //DocumentController.go
+		protected.POST("scraps/:scrap_id/finish", controllers.FinishScrapDocument) //DocumentController.go
 
 		/* ==================== GENERALE ==================== */
 		//Account Setting

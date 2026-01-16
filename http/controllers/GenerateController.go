@@ -410,9 +410,8 @@ func MapAndMergeHeaders(c *gin.Context) {
     }
 
     // log user action (implement function sesuai kebutuhan)
-    nameUser, _ := c.Get("username")
     metadata := map[string]interface{}{}
-    if err := helpers.LogUserAction(user.ID, nameUser.(string), "Upload inbound batch " + req.CodeDocument, "inbound/data_process/data_input", metadata); err != nil {
+    if err := helpers.LogUserAction(user.ID, user.Name, "Upload inbound batch " + req.CodeDocument, "inbound/data_process/data_input", metadata); err != nil {
         // non-fatal — hanya log
         log.Printf("warn: logUserAction failed: %v", err)
         return

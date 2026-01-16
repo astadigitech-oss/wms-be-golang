@@ -476,12 +476,8 @@ func DetailSummarySoCategory(c *gin.Context) {
 }
 
 func FilterSoCategory(c *gin.Context) {
-	userIDAny, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(401, gin.H{"status": false, "message": "unauthorized"})
-		return
-	}
-	userID := userIDAny.(uint)
+	user := c.MustGet("auth_user").(models.User)
+
 	q := c.DefaultQuery("q", "")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if page < 1 {
@@ -545,7 +541,7 @@ func FilterSoCategory(c *gin.Context) {
 		%s
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
-	`, userID, userID, searchCondition)
+	`, user.ID, user.ID, searchCondition)
 
 	argsData := append(args, limit, offset)
 	var filter_so []paginateData
@@ -576,7 +572,7 @@ func FilterSoCategory(c *gin.Context) {
 		) x
 		WHERE 1=1
 		%s
-	`, userID, userID, searchCondition)
+	`, user.ID, user.ID, searchCondition)
 
 	var totalData int64
 	if err := config.DB.Raw(countQuery, args...).Scan(&totalData).Error; err != nil {
@@ -866,8 +862,7 @@ func UpdateCheck(c *gin.Context) {
         var bundle models.Bundle
 
         // 2. Gunakan userID dari context (Pastikan middleware auth sudah benar)
-        uid, _ := c.Get("user_id")
-        userID := uid.(uint)
+        user := c.MustGet("auth_user").(models.User)
 
         // Cari data
         hasInventory := tx.Where("barcode = ?", req.Barcode).First(&product).Error == nil
@@ -888,7 +883,7 @@ func UpdateCheck(c *gin.Context) {
             incrementActivePeriod(tx, &activePeriod, &product)
             return tx.Model(&product).Updates(map[string]interface{}{
                 "is_so": "check", 
-                "user_so": userID,
+                "user_so": user.ID,
             }).Error
 
         } else if hasBundle {
@@ -901,7 +896,7 @@ func UpdateCheck(c *gin.Context) {
             }
             return tx.Model(&bundle).Updates(map[string]interface{}{
                 "is_so": "check", 
-                "user_so": userID,
+                "user_so": user.ID,
             }).Error
 
         } else {
@@ -953,7 +948,13 @@ func incrementActivePeriod(tx *gorm.DB, activePeriod *models.SummarySoCategory, 
         }
         tx.Model(activePeriod).Update(column, gorm.Expr(column+" + ?", 1))
 	}else {
-		tx.Model(activePeriod).Update("product_staging", gorm.Expr("product_staging + ?", 1))
+		column := "product_staging"
+        if inventory.Quality == "damage" {
+            column = "product_damaged"
+        } else if inventory.Quality == "abnormal" {
+            column = "product_abnormal"
+        }
+		tx.Model(activePeriod).Update(column, gorm.Expr(column+" + ?", 1))
 	}
 }
 

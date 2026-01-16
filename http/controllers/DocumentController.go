@@ -6,6 +6,7 @@ import (
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 	"net/http"
+	"time"
 
 	"database/sql"
 	"fmt"
@@ -386,11 +387,20 @@ func ChangeCustomBarcode(c *gin.Context) {
 	}
 
 	// ✅ TRANSACTION
-	tx := config.DB.Begin()
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
 		}
 	}()
 
@@ -434,18 +444,22 @@ func ChangeCustomBarcode(c *gin.Context) {
 func DestroyDocument(c *gin.Context) {
 	code_document := c.Param("code")
 
-    tx := config.DB.Begin()
-    if tx.Error != nil {
-        c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
-        return
-    }
+    tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
 
-    defer func() {
-        if r := recover(); r != nil {
-            tx.Rollback()
-            c.JSON(500, gin.H{"status": false, "message": "Terjadi kesalahan sistem", "error" : r})
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
 
     // HAPUS product_olds YANG TIDAK DIPAKAI
     deleteUnusedProductOld := `
@@ -1992,3 +2006,888 @@ func MigrateProductToDump(c *gin.Context) {
     })
 
 }
+
+// ===================== OUTBOUND ====================
+// QCD -> scrap
+func GetScrapDocuments(c *gin.Context) {
+	db := config.DB
+
+	q := c.Query("q")
+	status := c.Query("status")
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("per_page", "10"))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	offset := (page - 1) * limit
+
+	var results []models.ScrapDocument
+	var total int64
+
+	baseQuery := db.Table("scrap_documents sd").
+		Select(`
+			sd.id,
+			sd.code_document,
+			sd.status,
+			sd.total_product,
+			sd.total_new_price,
+			sd.total_old_price,
+			sd.created_at,
+			u.id   AS user_id,
+			u.name AS user_name
+		`).
+		Joins("LEFT JOIN users u ON u.id = sd.user_id").
+		Joins("LEFT JOIN scrap_items si ON si.scrap_document_id = sd.id")
+
+	// ===== Filter q =====
+	if q != "" {
+		like := "%" + q + "%"
+
+		baseQuery = baseQuery.Where(`
+			sd.code_document_scrap LIKE ?
+			OR u.name LIKE ?
+			OR EXISTS (
+				SELECT 1 FROM products p
+				WHERE p.id = si.product_id
+				AND (p.barcode LIKE ?)
+			)
+		`,
+			like, like, like,
+		)
+	}
+
+	// ===== Filter status =====
+	if status != "" {
+		baseQuery = baseQuery.Where("sd.status = ?", status)
+	}
+
+	// ===== Count total =====
+	if err := baseQuery.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// ===== Fetch data =====
+	if err := baseQuery.
+		Order("sd.created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&results).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	// ===== Response =====
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "List Data Scrap Documents",
+		"data": gin.H{
+			"current_page": page,
+			"per_page":     limit,
+			"total":        total,
+			"data":         results,
+			"links" :		links,
+		},
+	})
+}
+
+func GetProductDumps(c *gin.Context) {
+    q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 30
+	offset := (page - 1) * limit
+
+	//inisialisasi query
+	baseQuery := config.DB.Model(&models.Product{}).
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+        Where("products.status = ?", "dump")
+
+	// Searching (misalnya, mencari berdasarkan nama atau email)
+	if q != "" {
+		searchPattern := "%" + q + "%"
+		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
+            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.name LIKE ? OR " + 
+            "color_tags.name_color LIKE ? OR " + 
+            "categories.name_category LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+    // Paginate Data
+    type productsData struct {
+        ID          uint64  `json:"id"`
+        OldBarcode  string  `json:"old_barcode"`
+        NewBarcode     string  `json:"new_barcode"`
+        Name        string  `json:"name"`
+        Price       float64 `json:"price"`
+        OldPrice       float64 `json:"old_price"`
+        Status      string  `json:"status"`
+        Source      string  `json:"source"`
+        Category   *string  `json:"category"`
+    }
+
+    var products []productsData
+	var totalData int64
+
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
+    // Ambil data detail
+    err := baseQuery.Session(&gorm.Session{}).
+        Select(`
+            products.id, 
+            product_olds.old_barcode_product AS old_barcode, 
+            products.barcode AS new_barcode, 
+            products.name AS name, 
+            products.price AS price, 
+            product_olds.old_price_product AS old_price, 
+            products.status AS status, 
+			CASE 
+                WHEN products.quality = 'migrate' THEN 'migrate'
+                WHEN products.location_type = 'main' THEN 'display'
+                ELSE 'staging'
+            END AS source, 
+            COALESCE(color_tags.name_color, categories.name_category) AS category
+        `).
+        Order("products.created_at DESC").
+        Limit(limit).Offset(offset).
+        Find(&products).Error
+
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+        return
+    }
+
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Product Dump",
+			"resource": gin.H{
+                "current_page":           page,
+                "data":                 products,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + int(totalData),
+				"total":          totalData,
+			},
+		},
+	})
+}
+
+func DetailScrapDocuments(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	q := c.Query("q")
+	scrap_id := c.Param("scrap_id")	
+
+	limit := 30
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
+	offset := (page - 1) * limit
+
+	var doc models.ScrapDocument
+	db := config.DB
+
+	// 1. Cari scrap doc
+	err := db.First(&doc, scrap_id).Error
+
+	//Jika TIDAK ADA scrap document
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Scrap document tidak ditemukan",
+		})
+		
+		return
+	}
+
+	//Jika ADA sesi aktif
+	// Ambil item lewat scrap_items → products
+	type ItemResponse struct {
+		ID              uint64    `json:"id"`
+		NameProduct  string    `json:"name_product"`
+		Barcode      string    `json:"barcode"`
+		NewPrice        float64   `json:"new_price"`
+		OldPrice        float64   `json:"old_price"`
+		Status          string    `json:"status"`
+		Source          string    `json:"source"`
+		Category        string    `json:"category"`
+		CreatedAt       time.Time `json:"created_at"`
+		UpdatedAt       time.Time `json:"updated_at"`
+	}
+
+	var items []ItemResponse
+	var total int64
+
+	baseQuery := db.Table("scrap_items").
+		Select(`
+			products.id, 
+            products.name AS name_product, 
+            products.barcode AS barcode, 
+            products.price AS new_price, 
+            product_olds.old_price_product AS old_price, 
+            products.status AS status, 
+			CASE 
+                WHEN products.quality = 'migrate' THEN 'migrate'
+                WHEN products.location_type = 'main' THEN 'display'
+                ELSE 'staging'
+            END AS source, 
+            COALESCE(color_tags.name_color, categories.name_category) AS category,
+			products.created_at,
+			products.updated_at
+		`).
+		Joins("JOIN products ON products.id = scrap_items.product_id").
+		Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+		Where("scrap_items.scrap_document_id = ?", doc.ID)
+	
+	if q != "nil" {
+		keyword := "%" + q + "%"
+		baseQuery = baseQuery.Where("(products.name LIKE ? OR products.barcode LIKE ?)", keyword, keyword)
+	}
+
+	baseQuery.Session(&gorm.Session{}).Count(&total)
+
+	baseQuery.
+		Order("products.updated_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&items)
+
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Sesi Scrap Aktif Ditemukan",
+		"data": gin.H{
+			"document": doc,
+			"items": gin.H{
+				"current_page":   page,
+                "data":           items,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + len(items),
+				"total":          total,
+			},
+		},
+	})
+}
+
+func GetActiveSession(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	user := c.MustGet("auth_user").(models.User)
+
+	limit := 15
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
+	offset := (page - 1) * limit
+
+	var doc models.ScrapDocument
+	db := config.DB
+
+	// 1. Cari sesi aktif
+	err := db.
+		Where("user_id = ? AND status = ?", user.ID, "proses").
+		First(&doc).Error
+
+	//Jika TIDAK ADA sesi aktif → buat baru
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		now := time.Now()
+		monthYear := fmt.Sprintf("%02d/%d", now.Month(), now.Year())
+
+		var lastDoc models.ScrapDocument
+		nextNumber := 1
+
+		db.
+			Where("code_document LIKE ?", "%/"+monthYear).
+			Order("id DESC").
+			First(&lastDoc)
+
+		if lastDoc.ID != 0 {
+			parts := strings.Split(lastDoc.CodeDocument, "/")
+			if len(parts) > 0 {
+				if n, err := strconv.Atoi(parts[0]); err == nil {
+					nextNumber = n + 1
+				}
+			}
+
+		}
+
+		code := fmt.Sprintf("%04d/%s", nextNumber, monthYear)
+
+		doc = models.ScrapDocument{
+			CodeDocument: code,
+			UserID:       uint64(user.ID),
+			Status:       "proses",
+		}
+
+		if err := db.Create(&doc).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "Gagal membuat sesi scrap",
+			})
+			return
+		}
+
+		links := helpers.BuildPaginationLinks(c, page, 1)
+
+		c.JSON(http.StatusCreated, gin.H{
+			"success": true,
+			"message": "Sesi Scrap Baru Berhasil Dibuat",
+			"data": gin.H{
+				"document": doc,
+				"items":    gin.H{
+					"current_page": page,
+					"data": []any{},
+					"links": links,
+				},
+			},
+		})
+		return
+	}
+
+	//Jika ADA sesi aktif
+	// Ambil item lewat scrap_items → products
+	type ItemResponse struct {
+		ID              uint64    `json:"id"`
+		NameProduct  string    `json:"name_product"`
+		Barcode      string    `json:"barcode"`
+		NewPrice        float64   `json:"new_price"`
+		OldPrice        float64   `json:"old_price"`
+		Status          string    `json:"status"`
+		Source          string    `json:"source"`
+		Category        string    `json:"category"`
+		CreatedAt       time.Time `json:"created_at"`
+		UpdatedAt       time.Time `json:"updated_at"`
+	}
+
+	var items []ItemResponse
+	var total int64
+
+	baseQuery := db.Table("scrap_items").
+		Select(`
+			products.id, 
+            products.name AS name_product, 
+            products.barcode AS barcode, 
+            products.price AS new_price, 
+            product_olds.old_price_product AS old_price, 
+            products.status AS status, 
+			CASE 
+                WHEN products.quality = 'migrate' THEN 'migrate'
+                WHEN products.location_type = 'main' THEN 'display'
+                ELSE 'staging'
+            END AS source, 
+            COALESCE(color_tags.name_color, categories.name_category) AS category,
+			products.created_at,
+			products.updated_at
+		`).
+		Joins("JOIN products ON products.id = scrap_items.product_id").
+		Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+		Where("scrap_items.scrap_document_id = ?", doc.ID)
+
+	baseQuery.Session(&gorm.Session{}).Count(&total)
+
+	baseQuery.
+		Order("products.updated_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&items)
+
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Sesi Scrap Aktif Ditemukan",
+		"data": gin.H{
+			"document": doc,
+			"items": gin.H{
+				"current_page":   page,
+                "data":           items,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + len(items),
+				"total":          total,
+			},
+		},
+	})
+}
+
+func AddProductToScrap(c *gin.Context) {
+	scrap_id := c.Param("scrap_id")
+	barcode := c.Param("barcode")
+
+	// TRANSACTION
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	// Ambil Scrap Document
+	var doc models.ScrapDocument
+	if err := tx.First(&doc, scrap_id).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Dokumen scrap tidak ditemukan",
+		})
+		return
+	}
+
+	if doc.Status != "proses" {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Dokumen terkunci / sudah selesai",
+		})
+		return
+	}
+
+	// Ambil Produk
+	var product models.Product
+	if err := tx.Preload("ProductOld").
+		Where("barcode = ?", barcode).
+		First(&product).Error; err != nil {
+
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Produk tidak ditemukan",
+			"error": err.Error(),
+		})
+
+		return
+	}
+
+	if product.Status != "dump" {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Status produk harus dump",
+		})
+		return
+	}
+
+	// Cek apakah produk sedang discrap
+	var count int64
+	tx.Model(&models.ScrapItem{}).Where("product_id = ?", product.ID).
+		Count(&count)
+
+	if count > 0 {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Produk sudah masuk dalam scrap / sedang di scrap lain",
+		})
+		return
+	}
+
+	// Insert ke scrap_items
+	item := models.ScrapItem{
+		ScrapDocumentID: doc.ID,
+		ProductID:       product.ID,
+	}
+
+	if err := tx.Create(&item).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// Recalculate Total
+	result := tx.Model(&doc).Updates(map[string]interface{}{
+		"total_product":                    gorm.Expr("total_product + 1"),
+		"total_new_price":      gorm.Expr("total_new_price + ?", product.Price),
+		"total_old_price":      gorm.Expr("total_old_price + ?", product.ProductOld.OldPriceProduct),
+	})
+
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Scrap Document tidak ditemukan atau tidak berubah",
+		})
+		return
+	}
+
+	//update status product
+	if err := tx.Model(&product).Update("status", "scrap_qcd").Error; err != nil {
+		tx.Rollback()
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Product gagal di update ke scrap qcd",
+			"error": err.Error(),
+		})
+
+		return
+	}
+
+	// ✅ Commit
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Commit gagal",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Produk masuk list scrap",
+	})
+}
+
+func AddAllProductToScrap(c *gin.Context) {
+	scrap_id := c.Param("scrap_id")
+
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	// Ambil scrap document aktif
+	var doc models.ScrapDocument
+	if err := tx.First(&doc, scrap_id).Error; err != nil {
+		tx.Rollback()
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Scrap document tidak ditemukan",
+		})
+		return
+	}
+
+	if doc.Status != "proses" {
+		tx.Rollback()
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Document terkunci / selesai",
+		})
+		return
+	}
+
+	var count int64
+	err := tx.
+		Model(&models.Product{}).
+		Where("products.status = ?", "dump").
+		Where("NOT EXISTS (SELECT 1 FROM scrap_items si WHERE si.product_id = products.id)").
+		Count(&count).Error
+
+
+	if err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "Gagal menghitung total product"})
+		return
+	}
+
+	if count <= 0 {
+		tx.Rollback()
+		c.JSON(200, gin.H{"success": true, "message": "Tidak ada product dump"})
+		return
+	}
+
+	// insert scrap item
+	err = tx.Exec(`
+		INSERT INTO scrap_items (scrap_document_id, product_id, created_at, updated_at)
+		SELECT ?, p.id, NOW(), NOW()
+		FROM products p
+		WHERE p.status = 'dump'
+		AND NOT EXISTS (
+			SELECT 1 FROM scrap_items si WHERE si.product_id = p.id
+		)
+	`, doc.ID).Error
+
+	if err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal insert scrap items",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// UPDATE STATUS PRODUCT → scrap_qcd
+	err = tx.Exec(`
+		UPDATE products p
+		JOIN scrap_items si ON si.product_id = p.id
+		SET p.status = 'scrap_qcd',
+			p.updated_at = NOW()
+		WHERE si.scrap_document_id = ?
+	`, doc.ID).Error
+
+
+	if err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "Gagal update status product", "error": err.Error()})
+		return
+	}
+
+	// menghitung total scrap document
+	type Totals struct {
+		TotalProduct  int64
+		TotalNewPrice float64
+		TotalOldPrice float64
+	}
+
+	var totals Totals
+	err = tx.Raw(`
+		SELECT
+			COUNT(*) as total_product,
+			SUM(p.price) as total_new_price,
+			SUM(po.old_price_product) as total_old_price
+		FROM scrap_items si
+		JOIN products p ON p.id = si.product_id
+		JOIN product_olds po ON po.id = p.product_old_id
+		WHERE si.scrap_document_id = ?
+	`, doc.ID).Scan(&totals).Error
+
+	if err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "Gagal menghitung total scrap document", "error": err.Error()})
+		return
+	}
+
+	err = tx.
+		Model(&models.ScrapDocument{}).
+		Where("id = ?", doc.ID).
+		Updates(map[string]interface{}{
+			"total_product":   totals.TotalProduct,
+			"total_new_price": totals.TotalNewPrice,
+			"total_old_price": totals.TotalOldPrice,
+		}).Error
+
+	if err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "Gagal update scrap document", "error": err.Error()})
+		return
+	}
+
+	// Commit
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal commit transaksi",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"success": true,
+		"message": "Semua product dump berhasil ditambahkan ke scrap",
+		"data": gin.H{
+			"total_product":   totals.TotalProduct,
+			"total_new_price": totals.TotalNewPrice,
+			"total_old_price": totals.TotalOldPrice,
+		},
+	})
+}
+
+func LockScrapDocument(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	scrap_id := c.Param("scrap_id")
+
+	var doc models.ScrapDocument
+	db := config.DB
+
+	// 1. Cari scrap doc
+	err := db.First(&doc, scrap_id).Error
+
+	//Jika TIDAK ADA scrap document
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Scrap document tidak ditemukan",
+		})
+		
+		return
+	}
+
+	if doc.Status != "proses" {
+		c.JSON(422, gin.H{
+			"success": false,
+			"message": "Scrap document sudah terkunci / selesai",
+		})
+		
+		return
+	}
+
+	if doc.TotalProduct == 0 {
+		c.JSON(422, gin.H{
+			"success": false,
+			"message": "List kosong! Masukan produk sebelum menyelesaikan input",
+		})
+		
+		return
+	}
+
+	if err := db.Model(&doc).Update("status", "lock").Error; err!=nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Scrap document gagal diupdate",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Scrap document berhasil terkunci",
+	})
+}
+
+func FinishScrapDocument(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	scrap_id := c.Param("scrap_id")
+
+	var doc models.ScrapDocument
+	db := config.DB
+
+	// 1. Cari scrap doc
+	err := db.First(&doc, scrap_id).Error
+
+	//Jika TIDAK ADA scrap document
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Scrap document tidak ditemukan",
+		})
+		
+		return
+	}
+
+	if doc.Status == "selesai" {
+		c.JSON(422, gin.H{
+			"success": false,
+			"message": "Scrap document sudah terkunci / selesai",
+		})
+		
+		return
+	}
+
+	if doc.TotalProduct == 0 {
+		c.JSON(422, gin.H{
+			"success": false,
+			"message": "List kosong! Masukan produk sebelum menyelesaikan input",
+		})
+		
+		return
+	}
+
+	if err := db.Model(&doc).Update("status", "selesai").Error; err!=nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Scrap document gagal diupdate",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Scrap document berhasil selesai",
+	})
+}
+
+
+
+

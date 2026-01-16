@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+
 	// "os"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 
+	"github.com/go-faker/faker/v4"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,6 +20,12 @@ import (
 
 func main() {
 	config.InitDB()
+	
+	app_env := os.Getenv("APP_ENV")
+	if app_env == "production" {
+		log.Fatal("❌ Gagal: sistem saat ini dalam mode production")
+	}
+
 	log.Println("⏳ Memulai seeder...")
 	
 	// truncateTables()
@@ -42,6 +51,14 @@ func main() {
 	}
 
 	if err := seedRacks(config.DB); err != nil {
+		log.Fatal("❌ Gagal :", err)
+	}
+
+	if err := seedLoyaltyRanks(config.DB); err != nil {
+		log.Fatal("❌ Gagal :", err)
+	}
+
+	if err := seedBuyer(config.DB, 10); err != nil {
 		log.Fatal("❌ Gagal :", err)
 	}
 
@@ -99,6 +116,72 @@ func seedUsers(db *gorm.DB) error {
 		DoNothing: true,
 	}).Create(&users).Error
 }
+
+func seedBuyer(db *gorm.DB, total int) error {
+	for i := 0; i < total; i++ {
+		buyer := models.Buyer{
+			NameBuyer:              faker.Name(),
+			LoyaltyRankID: 			1,	
+			PhoneBuyer:             faker.Phonenumber(),
+			AddressBuyer:           faker.GetRealAddress().Address,
+			TypeBuyer:              "Biasa",
+			AmountTransactionBuyer: 1000.0,
+			AmountPurchaseBuyer:    1000.0,
+			AvgPurchaseBuyer:       1000.0,
+		}
+
+		if err := db.Create(&buyer).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func seedLoyaltyRanks(db *gorm.DB) error {
+	// now := time.Now()
+
+	ranks := []models.LoyaltyRank{
+		{
+			Rank:                 "New Buyer",
+			MinTransactions:      0,
+			MinAmountTransaction: 5000000,
+			PercentageDiscount:   0,
+			ExpiredWeeks:         0,
+		},
+		{
+			Rank:                 "Bronze",
+			MinTransactions:      1,
+			MinAmountTransaction: 5000000,
+			PercentageDiscount:   1,
+			ExpiredWeeks:         5,
+		},
+		{
+			Rank:                 "Silver",
+			MinTransactions:      3,
+			MinAmountTransaction: 5000000,
+			PercentageDiscount:   2,
+			ExpiredWeeks:         4,
+		},
+		{
+			Rank:                 "Gold",
+			MinTransactions:      6,
+			MinAmountTransaction: 5000000,
+			PercentageDiscount:   4,
+			ExpiredWeeks:         3,
+		},
+		{
+			Rank:                 "Platinum",
+			MinTransactions:      12,
+			MinAmountTransaction: 5000000,
+			PercentageDiscount:   8,
+			ExpiredWeeks:         2,
+		},
+	}
+
+	return db.Create(&ranks).Error
+}
+
 
 func seedCategories(db *gorm.DB) error {
 	categories := []models.Category{
@@ -260,6 +343,8 @@ func truncateTables() error {
 		"color_tags",
 		"categories",
 		"racks",
+		"loyalty_ranks",
+		"buyers",
 	}
 	// Matikan foreign key check
 	config.DB.Exec("SET FOREIGN_KEY_CHECKS = 0")

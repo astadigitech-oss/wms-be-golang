@@ -63,6 +63,12 @@ var Tables = []interface{}{
 	&models.BklItem{},
 	&models.MigrateRepairDocument{},
 	&models.MigrateRepairItem{},
+	&models.LoyaltyRank{},
+	&models.Buyer{},
+	&models.BuyerLoyaltyHistory{},
+	&models.SaleDocument{},
+	&models.ScrapDocument{},
+	&models.ScrapItem{},
 }
 
 
