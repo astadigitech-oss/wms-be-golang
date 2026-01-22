@@ -136,35 +136,99 @@ func GetBundleDetail(c *gin.Context) {
 }
 
 func GetBundleFilterProduct(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+
+	// =========================
+	// Hitung total harga
+	// =========================
+	var totalPrice float64
+	if err := config.DB.
+		Table("bundle_items").
+		Joins("JOIN products ON products.id = bundle_items.product_id").
+		Joins("JOIN product_olds po ON po.id = products.product_old_id").
+		Where("bundle_items.user_id = ?", user.ID).
+		Where("bundle_items.bundle_id IS NULL").
+		Where("bundle_items.bundle_stage = ?", "bundle_filter").
+		Select("COALESCE(SUM(po.old_price_product), 0)").
+		Scan(&totalPrice).Error; err != nil {
+
+		c.JSON(500, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// =========================
+	// Variabel response
+	// =========================
+	var (
+		colorTag      []models.ColorTag
+		categories []models.Category
+	)
+
+	// =========================
+	// Logic harga
+	// =========================
+	if totalPrice > 99999 {
+		// Ambil semua category
+		if err := config.DB.Find(&categories).Error; err != nil {
+			c.JSON(500, gin.H{"success": false, "error": err.Error()})
+			return
+		}
+	} else {
+		// Cari color tag berdasarkan range harga
+		// var colorTag []models.ColorTag
+		if err := config.DB.
+			Where("min_price_color <= ?", totalPrice).
+			Where("max_price_color >= ?", totalPrice).
+			Find(&colorTag).Error; err != nil {
+
+			c.JSON(500, gin.H{"success": false, "error": err.Error()})
+			return
+		}
+	}
+
+	// =========================
+	// Data product (join product)
+	// =========================
 	type productData struct {
-		ID string `json:"id"`
-		NewBarcode string `json:"new_barcode"`
-		ProductName string `json:"product_name"`
+		ID          string  `json:"id"`
+		NewBarcode  string  `json:"new_barcode"`
+		ProductName string  `json:"product_name"`
+		OldPrice    float64 `json:"old_price"`
 	}
 
 	var result []productData
-	if err := config.DB.Model(&models.BundleItem{}).
+	if err := config.DB.
+		Table("bundle_items").
 		Joins("LEFT JOIN products ON products.id = bundle_items.product_id").
+		Joins("LEFT JOIN product_olds po ON po.id = products.product_old_id").
 		Select(`
-			bundle_items.id AS id,
+			bundle_items.id,
+			products.barcode AS new_barcode,
 			products.name AS product_name,
-			products.barcode AS new_barcode
+			po.old_price_product AS old_price
 		`).
-		Where("(bundle_id IS NULL)").
-		Where("bundle_stage = ?", "bundle_filter").
+		Where("bundle_items.user_id = ?", user.ID).
+		Where("bundle_items.bundle_id IS NULL").
+		Where("bundle_items.bundle_stage = ?", "bundle_filter").
+		Order("bundle_items.created_at DESC").
 		Scan(&result).Error; err != nil {
-		c.JSON(500, gin.H{"status": false, "error":err.Error()})
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
 		return
-	} 
+	}
 
+	// =========================
+	// Response
+	// =========================
 	c.JSON(http.StatusOK, gin.H{
-		"status":   true,
-		"message":  "list product filter bundle",
+		"status":  true,
+		"message": "list product filter bundle",
 		"resource": gin.H{
-			"data": result,
+			"total_new_price": totalPrice,
+			"color_tag":           colorTag,
+			"category":        categories,
+			"data":            result,
 		},
 	})
-
 }
 
 func AddProductBundle(c *gin.Context) {
@@ -469,7 +533,7 @@ func CreateBundleProduct(c *gin.Context) {
 
     var bundleItems []models.BundleItem
     err := config.DB.Preload("Product.ProductOld").
-        Where("bundle_stage = ?", item_filter).
+        Where("user_id = ? AND bundle_stage = ?", user.ID, item_filter).
         Find(&bundleItems).Error
 
     if err != nil {
@@ -603,6 +667,7 @@ func CreateBundleProduct(c *gin.Context) {
 		Updates(map[string]interface{}{
 			"bundle_id":    bundle.ID,
 			"bundle_stage": nil,
+			"user_id": nil,
 		}).Error; err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "failed to update bundle items", "error": err.Error()})
@@ -819,6 +884,7 @@ func UpdateBundle(c *gin.Context) {
 
 func BundleAddFilterProduct(c *gin.Context) {
 	id := c.Param("id")
+	user := c.MustGet("auth_user").(models.User)
 
 	type payloadRequest struct {
         BundleType string  `json:"bundle_type" binding:"required,oneof=bundle repair qcd"`
@@ -880,9 +946,9 @@ func BundleAddFilterProduct(c *gin.Context) {
     }()
 
 	var existingItem models.BundleItem
-    if err := tx.Where("product_id = ? AND bundle_id IS NULL", productID).First(&existingItem).Error; err == nil {
+    if err := tx.Where("product_id = ?", productID).First(&existingItem).Error; err == nil {
         tx.Rollback()
-        c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": "produk sudah ada dalam antrian filter"})
+        c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": "produk sudah ada dalam bundle / filter"})
         return
     }
 
@@ -896,7 +962,9 @@ func BundleAddFilterProduct(c *gin.Context) {
 		item_filter = "qcd_filter"
 	}
 
+
 	bundle_item := models.BundleItem{
+		UserID: 	&user.ID,
 		ProductID:    productID,
 		BundleStage: &item_filter,
 		Status: product.Status,
