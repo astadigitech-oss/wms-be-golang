@@ -1,22 +1,23 @@
 package controllers
 
 import (
+	"errors"
 	"liquid8/wms/config"
-	"liquid8/wms/models"
 	"liquid8/wms/helpers"
+	"liquid8/wms/models"
 
-    "fmt"
-    "net/http"
-    "path/filepath"
 	"encoding/json"
-    "sync"
-    "log"
-    "time"
-    "strings"
+	"fmt"
+	"log"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
-    "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/xuri/excelize/v2"
-    "github.com/go-playground/validator/v10"
 )
 
 
@@ -71,7 +72,12 @@ func processExcelFile(filePath, fileName string) (string, []string, int, error) 
 	
     defer f.Close()
 
-    rows, err := f.Rows("Sheet1")
+    sheetName := f.GetSheetName(0)
+    if sheetName == "" {
+        return "", nil, 0, errors.New("sheet excel tidak ditemukan")
+    }
+
+    rows, err := f.Rows(sheetName)
 	if err != nil {
 		return "", nil, 0, err
 	}
