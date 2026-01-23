@@ -121,7 +121,6 @@ func seedBuyer(db *gorm.DB, total int) error {
 	for i := 0; i < total; i++ {
 		buyer := models.Buyer{
 			NameBuyer:              faker.Name(),
-			LoyaltyRankID: 			1,	
 			PhoneBuyer:             faker.Phonenumber(),
 			AddressBuyer:           faker.GetRealAddress().Address,
 			TypeBuyer:              "Biasa",

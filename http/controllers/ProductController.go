@@ -588,7 +588,7 @@ func AddProductManual(c *gin.Context) {
     newProduct.Barcode = barcode
     oldProduct := models.ProductOld{
         OldNameProduct: newProduct.Name,
-        OldPriceProduct: newProduct.Price,
+        OldPriceProduct: payload.PriceProduct,
         OldQuantityProduct: int(newProduct.Quantity),
         InboundType: "manual-inbound",
     }
@@ -791,6 +791,7 @@ func StaggingProductDetail(c *gin.Context) {
 	err := config.DB.WithContext(c.Request.Context()).
                 Preload("ProductOld").
                 Preload("Category").
+                Where("location_type = ?", "staging").
                 First(&product, "id = ?", product_id).Error
 
     if err != nil {
@@ -971,9 +972,9 @@ func UpdateDataProduct(c *gin.Context) {
         return
     }
 
-    updateData["price"] = calculatedPrice - (calculatedPrice * float64(payload.Discount) / 100)
+    updateData["price"] = calculatedPrice
     updateData["category_id"] = category.ID
-    updateData["display_price"] = updateData["price"]
+    updateData["display_price"] = calculatedPrice - (calculatedPrice * float64(payload.Discount) / 100)
     
 
     logDetails := map[string]interface{}{
@@ -1665,6 +1666,70 @@ func GetProductsByColor(c *gin.Context) {
 	})
 }
 
+func GetDetailProduct(c *gin.Context) {
+    product_id := c.Param("product_id")
+
+	//inisialisasi query
+    
+	baseQuery := config.DB.Model(&models.Product{}).
+        Select(`
+            products.id AS id,
+            products.barcode AS new_barcode,
+            product_olds.old_barcode_product AS old_barcode,
+            products.name AS new_name,
+            product_olds.old_name_product AS old_name,
+            products.quantity AS new_quantity,
+            product_olds.old_quantity_product AS old_quantity,
+            products.price AS new_price,
+            product_olds.old_price_product AS old_price,
+            products.status AS status,
+            COALESCE(color_tags.name_color, categories.name_category) AS category
+        `).
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN categories ON categories.id = products.category_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+        Where("products.id = ?", product_id).
+        Where("products.location_type = ?", "main")
+
+    // Paginate Data
+    type productsData struct {
+        ID          uint64  `json:"id"`
+        NewBarcode  string  `json:"new_barcode"`
+        OldBarcode  string  `json:"old_barcode"`
+        OldName        string  `json:"old_name"`
+        NewName        string  `json:"new_name"`
+        OldPrice       float64 `json:"old_price"`
+        NewPrice       float64 `json:"new_price"`
+        OldQuntity       float64 `json:"old_quantity"`
+        NewQuantity       float64 `json:"new_quantity"`
+        Status      string  `json:"status"`
+        Category   string  `json:"category"`
+    }
+
+    var product productsData
+
+    // Ambil data detail
+    if err := baseQuery.First(&product).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(500, gin.H{"success": false, "message": "Product tidak ditemukan"})
+        }else {
+            c.JSON(500, gin.H{"success": false, "message": "Product tidak ditemukan"})
+    
+        }
+
+        return
+    }
+
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "Detail data product",
+			"resource": product,
+		},
+	})
+}
+
 func GetProductsByCategory(c *gin.Context) {
     type ProductResult struct {
         ID                 uint      `json:"id"`
@@ -1769,7 +1834,8 @@ func GetProductsByCategory(c *gin.Context) {
 		LIMIT ? OFFSET ?
 	`, searchCondition)
 
-	argsData := append(args, limit, offset)
+	argsData := append([]interface{}{}, args...)
+	argsData = append(argsData, limit, offset)
 
 	var results []ProductResult
 	if err := config.DB.Raw(dataQuery, argsData...).Scan(&results).Error; err != nil {
@@ -2378,6 +2444,7 @@ func GetProductAbnormal(c *gin.Context) {
 }
 
 func AbnormalToDisplay(c *gin.Context) {
+    user := c.MustGet("auth_user").(models.User)
     type payloadRequest struct {
         NewNameProduct     string  `json:"new_name_product" binding:"required"`
         NewQuantityProduct int     `json:"new_quantity_product" binding:"required,gt=0"`
@@ -2603,7 +2670,7 @@ func AbnormalToDisplay(c *gin.Context) {
         }
     }
 
-    if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {
+    if err := tx.Model(&product).Updates(updateData).Error; err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
         return
@@ -2614,6 +2681,30 @@ func AbnormalToDisplay(c *gin.Context) {
         Update("old_price_product", payload.OldPriceProduct).Error; err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal update data product old", "error": err.Error()})
+        return
+    }
+
+    logDetails := map[string]interface{}{
+        "changes": map[string]interface{}{
+            "new_name":         payload.NewNameProduct,
+            "new_quantity":     payload.NewQuantityProduct,
+            "new_price":        payload.NewPriceProduct,
+            "display_price":    updateData["display_price"],
+            "old_price":        payload.OldPriceProduct,
+        },
+        "Before Edit : ": map[string]interface{}{
+            "new_name":       product.Name,
+            "new_quantity":   product.Quantity,
+            "new_price":   product.Price,
+            "display_price": product.DisplayPrice,
+            "old_price":      product.ProductOld.OldPriceProduct, // Harga lama di Staging
+        },
+    }
+    
+    action := fmt.Sprintf("Memindahkan product abnormal: %s (%s) ke display", product.Name, product.Barcode)
+    if err := helpers.LogUserAction(user.ID, user.Name, action, "repair-station/abnormal/to-display", logDetails); err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal membuat user log action", "error": err.Error()})
         return
     }
 
@@ -2737,6 +2828,7 @@ func GetProductDamaged(c *gin.Context) {
 }
 
 func DamagedToDisplay(c *gin.Context) {
+    user := c.MustGet("auth_user").(models.User)
     type payloadRequest struct {
         NewNameProduct     string  `json:"new_name_product" binding:"required"`
         NewQuantityProduct int     `json:"new_quantity_product" binding:"required,gt=0"`
@@ -2962,7 +3054,7 @@ func DamagedToDisplay(c *gin.Context) {
         }
     }
 
-    if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {
+    if err := tx.Model(&product).Updates(updateData).Error; err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
         return
@@ -2975,6 +3067,30 @@ func DamagedToDisplay(c *gin.Context) {
         c.JSON(500, gin.H{"status": false, "message": "Gagal update data product old", "error": err.Error()})
         return
     }
+
+    logDetails := map[string]interface{}{
+        "changes": map[string]interface{}{
+            "new_name":         payload.NewNameProduct,
+            "new_quantity":     payload.NewQuantityProduct,
+            "new_price":        payload.NewPriceProduct,
+            "display_price":    updateData["display_price"],
+            "old_price":        payload.OldPriceProduct,
+        },
+        "Before Edit : ": map[string]interface{}{
+            "new_name":       product.Name,
+            "new_quantity":   product.Quantity,
+            "new_price":   product.Price,
+            "display_price": product.DisplayPrice,
+            "old_price":      product.ProductOld.OldPriceProduct, // Harga lama di Staging
+        },
+    }
+    
+    action := fmt.Sprintf("Memindahkan product damaged: %s (%s) ke display", product.Name, product.Barcode)
+    if err := helpers.LogUserAction(user.ID, user.Name, action, "repair-station/damaged/to-display", logDetails); err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal membuat user log action", "error": err.Error()})
+        return
+    }    
 
     if err := tx.Commit().Error; err != nil {
         tx.Rollback()
@@ -3096,6 +3212,7 @@ func GetProductNon(c *gin.Context) {
 }
 
 func NonToDisplay(c *gin.Context) {
+    user := c.MustGet("auth_user").(models.User)
     type payloadRequest struct {
         NewNameProduct     string  `json:"new_name_product" binding:"required"`
         NewQuantityProduct int     `json:"new_quantity_product" binding:"required,gt=0"`
@@ -3229,6 +3346,44 @@ func NonToDisplay(c *gin.Context) {
         updateData["category_id"] = category.ID
         updateData["tag_color_id"] = nil
         updateData["display_price"] = calculatedPrice
+
+        // Cek summary so category
+        if *product.IsSo == "check" {
+            var checkSoCategory models.SummarySoCategory
+            if err := tx.Where("type = ?", "process").First(&checkSoCategory).Error; err != nil {
+                if err != gorm.ErrRecordNotFound {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal mengambil summary SO category",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+
+            if checkSoCategory.ID != 0 {
+                columnLocation := "product_staging"
+                if product.LocationType != nil && *product.LocationType == "main" {
+                    columnLocation = "product_inventory"
+                }
+
+                updateSo := map[string]interface{}{
+                    "product_non":      gorm.Expr("product_non - 1"),
+                    columnLocation :         gorm.Expr(columnLocation+" + 1"),
+                }
+
+                if err := tx.Model(&checkSoCategory).Updates(updateSo).Error; err != nil {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal memperbarui summary category",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            } 
+        }
     }else {
         var color_tag models.ColorTag
         if payload.TagColorID == nil {
@@ -3248,9 +3403,42 @@ func NonToDisplay(c *gin.Context) {
         updateData["category_id"] = nil
         updateData["tag_color_id"] = color_tag.ID
         updateData["display_price"] = color_tag.FixedPriceColor
+
+        // Cek Summary SO Color
+        if *product.IsSo == "check" {
+            var checkSoColor models.SummarySoColor
+            if err := tx.Where("type = ?", "process").First(&checkSoColor).Error; err != nil {
+                if err != gorm.ErrRecordNotFound {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal mengambil summary SO color",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+            // SO COLOR (UPSERT)
+            if checkSoColor.ID != 0 {
+                if err := incrementOrCreateSoColor(
+                    tx,
+                    checkSoColor.ID,
+                    color_tag.NameColor,
+                    "lolos",
+                ); err != nil {
+                    tx.Rollback()
+                    c.JSON(http.StatusInternalServerError, gin.H{
+                        "status": false,
+                        "message": "Gagal memperbarui summary SO color",
+                        "error": err.Error(),
+                    })
+                    return
+                }
+            }
+        }
     }
 
-    if err := tx.Model(&models.Product{}).Where("id = ?", productIDUint).Updates(updateData).Error; err != nil {
+    if err := tx.Model(&product).Updates(updateData).Error; err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal update data product", "error": err.Error()})
         return
@@ -3261,6 +3449,30 @@ func NonToDisplay(c *gin.Context) {
         Update("old_price_product", payload.OldPriceProduct).Error; err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal update data product old", "error": err.Error()})
+        return
+    }
+
+    logDetails := map[string]interface{}{
+        "changes": map[string]interface{}{
+            "new_name":         payload.NewNameProduct,
+            "new_quantity":     payload.NewQuantityProduct,
+            "new_price":        payload.NewPriceProduct,
+            "display_price":    updateData["display_price"],
+            "old_price":        payload.OldPriceProduct,
+        },
+        "Before Edit : ": map[string]interface{}{
+            "new_name":       product.Name,
+            "new_quantity":   product.Quantity,
+            "new_price":   product.Price,
+            "display_price": product.DisplayPrice,
+            "old_price":      product.ProductOld.OldPriceProduct, // Harga lama di Staging
+        },
+    }
+    
+    action := fmt.Sprintf("Memindahkan product non: %s (%s) ke display", product.Name, product.Barcode)
+    if err := helpers.LogUserAction(user.ID, user.Name, action, "repair-station/non/to-display", logDetails); err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal membuat user log action", "error": err.Error()})
         return
     }
 
@@ -3275,4 +3487,146 @@ func NonToDisplay(c *gin.Context) {
         "message": "product berhasil diupdate",
     })
 
+}
+
+
+// ============================= OUTBOUND =============================
+//sale
+func GetProductsForSale(c *gin.Context) {
+    type ProductResult struct {
+        Barcode            string    `json:"barcode"`
+        Name               string    `json:"name"`
+        Category       string    `json:"category"`
+        Price              float64   `json:"price"`
+		CreatedDate       time.Time `json:"created_date"`
+    }
+
+	q := strings.TrimSpace(c.Query("q"))
+
+	// PAGINATION
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 15
+	offset := (page - 1) * limit
+
+	// SEARCH CONDITION
+	searchCondition := ""
+	args := []interface{}{}
+
+	if q != "" {
+		searchCondition = `
+			AND (
+				barcode LIKE ?
+				OR name LIKE ?
+				OR category LIKE ?
+			)
+		`
+		search := "%" + q + "%"
+		args = append(args, search, search, search)
+	}
+
+	// UNION QUERY (DATA)
+	dataQuery := fmt.Sprintf(`
+		SELECT * FROM (
+			SELECT
+				p.barcode AS barcode,
+				p.name AS name,
+				c.name_category AS category,
+				p.price AS price,
+				p.created_at AS created_date
+			FROM products p
+			LEFT JOIN categories c ON c.id = p.category_id
+			WHERE p.tag_color_id IS NULL
+				AND p.category_id IS NOT NULL
+				AND p.status != 'sale'
+				AND p.quality = 'lolos'
+
+			UNION ALL
+
+			SELECT
+				b.barcode AS barcode,
+				b.name_bundle AS name,
+				c.name_category AS category,
+				b.total_price_custom AS price,
+				b.created_at AS created_date
+			FROM bundles b
+			LEFT JOIN categories c ON c.id = b.category_id
+			WHERE b.total_price_custom >= 100000
+				AND b.tag_color_id IS NULL
+				AND b.category_id IS NOT NULL
+				AND b.status != 'sale'
+				AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
+		) x
+		WHERE 1=1
+		%s
+		ORDER BY created_date DESC
+		LIMIT ? OFFSET ?
+	`, searchCondition)
+
+	argsData := append([]interface{}{}, args...)
+	argsData = append(argsData, limit, offset)
+
+	var results []ProductResult
+	if err := config.DB.Raw(dataQuery, argsData...).Scan(&results).Error; err != nil {
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+		return
+	}
+
+	// COUNT QUERY
+	countQuery := fmt.Sprintf(`
+        SELECT COUNT(*) FROM (
+            SELECT 
+                p.barcode AS barcode,
+                p.name AS name,
+                c.name_category AS category
+            FROM products p
+            LEFT JOIN categories c ON c.id = p.category_id
+            WHERE p.tag_color_id IS NULL
+                AND p.category_id IS NOT NULL
+				AND p.status != 'sale'
+				AND p.quality = 'lolos'
+
+            UNION ALL
+
+            SELECT 
+                b.barcode AS barcode,
+                b.name_bundle AS name,
+                c.name_category AS category
+            FROM bundles b
+            LEFT JOIN categories c ON c.id = b.category_id
+            WHERE b.total_price_custom >= 100000
+                AND b.tag_color_id IS NULL
+                AND b.category_id IS NOT NULL
+                AND b.status != 'sale'
+                AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
+        ) x
+        WHERE 1=1
+        %s
+    `, searchCondition)
+
+
+	var totalData int64
+	if err := config.DB.Raw(countQuery, args...).Scan(&totalData).Error; err != nil {
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+		return
+	}
+
+    // pagination links
+    lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "List Data Products",
+		"resource": gin.H{
+			"total":          totalData,
+			"data":           results,
+			"current_page":   page,
+			"last_page":      lastPage,
+			"per_page":       limit,
+            "links":           links,
+		},
+	})
 }

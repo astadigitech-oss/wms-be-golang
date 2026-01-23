@@ -6,8 +6,8 @@ type Bundle struct {
 	ID              uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	UserID          *uint64    `json:"user_id"`
 	NameBundle      string    `gorm:"size:255;not null" json:"name_bundle"`
-	TotalPrice      float64   `gorm:"type:decimal(18,2);default:0" json:"total_price"`
-	TotalPriceCustom float64  `gorm:"type:decimal(18,2);default:0" json:"total_price_custom"`
+	TotalPrice      float64   `gorm:"type:decimal(18,2);default:0" json:"total_price"` //total old price productnya
+	TotalPriceCustom float64  `gorm:"type:decimal(18,2);default:0" json:"total_price_custom"` //harga setelah diskon category
 	TotalProduct    int64     `gorm:"default:0" json:"total_product"`
 	Status          string    `gorm:"size:50;type:enum('not sale', 'sale', 'bundle', 'draft');default:'not sale'" json:"status"`
 	Barcode         string    `gorm:"size:255;unique;not null" json:"barcode"`

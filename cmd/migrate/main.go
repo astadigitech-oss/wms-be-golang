@@ -67,6 +67,8 @@ var Tables = []interface{}{
 	&models.Buyer{},
 	&models.BuyerLoyaltyHistory{},
 	&models.SaleDocument{},
+	&models.Sale{},
+	&models.Ppn{},
 	&models.ScrapDocument{},
 	&models.ScrapItem{},
 }

@@ -14,6 +14,7 @@ type SummarySoCategory struct {
 	ProductInventory     int      `gorm:"not null;default:0" json:"product_inventory"`  // Pointer agar bisa menampung nilai null
 	ProductDamaged     int      `gorm:"not null;default:0" json:"product_damaged"`  // Pointer agar bisa menampung nilai null
 	ProductAbnormal    int      `gorm:"not null;default:0" json:"product_abnormal"`
+	ProductNon    		int      `gorm:"not null;default:0" json:"product_non"`
 	ProductLost        int      `gorm:"not null;default:0" json:"product_lost"`
 	ProductAddition    int      `gorm:"not null;default:0" json:"product_addition"`
 	CreatedAt          time.Time `json:"created_at"`

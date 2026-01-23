@@ -1,15 +1,16 @@
 package helpers
 
 import (
+	"database/sql"
 	"liquid8/wms/config"
 	"liquid8/wms/models"
 	"net/url"
 
 	"context"
-	"math/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -286,6 +287,68 @@ func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	return "", errors.New("failed to generate unique barcode after max retries")
 }
 
+func GenerateCodeSaleDocument(db *gorm.DB, userID uint64) (string, error) {
+	const (
+		length   = 5
+		maxRetry = 10
+		prefix   = "LQDSLE"
+	)
+
+	var lastCode sql.NullString
+
+	// Ambil code terakhir berdasarkan user
+	err := db.
+		Model(&models.SaleDocument{}).
+		Where("user_id = ?", userID).
+		Select("code_document_sale").
+		Order("id DESC").
+		Limit(1).
+		Scan(&lastCode).
+		Error
+	if err != nil {
+		return "", err
+	}
+
+	// Default jika belum ada data
+	nextID := 1
+
+	// Jika sudah ada code sebelumnya
+	if lastCode.Valid {
+		code := lastCode.String // contoh: LQDSLE00006
+
+		numPart := code[len(prefix):] // ambil "00006"
+		if num, err := strconv.Atoi(numPart); err == nil {
+			nextID = num + 1
+		}
+	}
+
+	// Retry jika ternyata code bentrok
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+
+		barcode := fmt.Sprintf("%s%0*d", prefix, length, nextID)
+
+		var count int64
+		err := db.
+			WithContext(context.Background()).
+			Model(&models.SaleDocument{}).
+			Where("code_document_sale = ?", barcode).
+			Count(&count).
+			Error
+		if err != nil {
+			return "", err
+		}
+
+		if count == 0 {
+			return barcode, nil
+		}
+
+		// Jika sudah ada, naikkan angka & coba lagi
+		nextID++
+	}
+
+	return "", errors.New("failed to generate unique code after max retries")
+}
+
 func GenerateBarcodeBundleRepair(db *gorm.DB) (string, error) {
 	const (
 		length   = 5
@@ -473,4 +536,95 @@ func ternary(condition bool, a, b interface{}) interface{} {
 		return a
 	}
 	return b
+}
+
+// ========================== Loyalty Service =====================
+func ProcessLoyalty(
+	tx *gorm.DB,
+	buyer *models.Buyer,
+	totalDisplayPrice float64,
+) error {
+
+	if totalDisplayPrice < 1 {
+		return nil
+	}
+
+	now := time.Now().In(time.FixedZone("Asia/Jakarta", 7*3600))
+
+	newTransaction := buyer.TransactionCount + 1
+	updateData := map[string]interface{}{
+		"transaction_count": newTransaction,
+	}
+
+	// ===========================
+	// GET ELIGIBLE RANK
+	// ===========================
+	var eligibleRank models.LoyaltyRank
+	if buyer.LoyaltyRankID == nil && buyer.TransactionCount == 0 {		
+		if err := tx.
+			Where("min_transactions <= ?", buyer.TransactionCount).
+			Order("min_transactions DESC").
+			Limit(1).
+			First(&eligibleRank).Error; err != nil {
+			return err
+		}
+	}else {
+		if err := tx.
+			Where("min_transactions <= ?", newTransaction).
+			Order("min_transactions DESC").
+			Limit(1).
+			First(&eligibleRank).Error; err != nil {
+			return err
+		}
+	}
+
+	// ===========================
+	// CHECK RANK CHANGE
+	// ===========================
+	var previousRankID *uint64
+
+	rankChanged := buyer.LoyaltyRankID == nil ||
+		*buyer.LoyaltyRankID != eligibleRank.ID
+
+	if buyer.LoyaltyRankID != nil {
+		previousRankID = buyer.LoyaltyRankID
+	}
+
+	expire := now.AddDate(0, 0, eligibleRank.ExpiredWeeks*7)
+
+	if buyer.TransactionCount == 0 {
+		updateData["expire_date"] = expire
+	}
+
+	if rankChanged {
+		updateData["loyalty_rank_id"] = eligibleRank.ID
+		updateData["last_upgrade_date"] = now
+		updateData["loyalty_updated_at"] = now
+	}
+
+	// ===========================
+	// UPDATE BUYER
+	// ===========================
+	if err := tx.Model(&models.Buyer{}).
+		Where("id = ?", buyer.ID).
+		Updates(updateData).Error; err != nil {
+		return err
+	}
+
+	// ===========================
+	// HISTORY (ONLY IF RANK CHANGED)
+	// ===========================
+	noted := "Rank upgraded to " + eligibleRank.Rank
+	if rankChanged {
+		if err := tx.Create(&models.BuyerLoyaltyHistory{
+			BuyerID:        buyer.ID,
+			PreviousRankID: previousRankID,
+			CurrentRankID:  &eligibleRank.ID,
+			Note:           &noted,
+		}).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

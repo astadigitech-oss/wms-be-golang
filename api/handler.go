@@ -78,6 +78,7 @@ func RouteHandler(r *gin.Engine) {
 		/* ==================== INVENTORY ==================== */
 		//Product
 		protected.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
+		protected.GET("/products/:product_id/detail", controllers.GetDetailProduct) // ProductController.go
 		protected.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
 		protected.GET("/products/status/display-expired", controllers.GetProductsStatusDisplayExpired) // ProductController.go
 		protected.PUT("/products/:barcode/status-dump", controllers.ProductToDump) // ProductController.go
@@ -152,15 +153,23 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/products/non", controllers.GetProductNon) //ProductController.go
 		protected.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
 
-		/* ==================== ACCOUNT ==================== */
-		//Account Setting
-		protected.GET("/users", controllers.GetUsers) //UserController.go
-		protected.GET("/roles", controllers.GetRoles) //UserController.go
-		protected.POST("/users", controllers.CreateUser) //UserController.go
-		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
-		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
-
 		/* ==================== OUTBOUND ==================== */
+		//sale
+		protected.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
+		// protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocuments) //SaleController.go
+		protected.GET("sales", controllers.SaleIndex) //SaleController.go
+		protected.GET("sale/buyers", controllers.GetBuyers) //BuyerController.go
+		protected.GET("sale/products", controllers.GetProductsForSale) //ProductController.go
+		protected.POST("sale/products/add", controllers.StoreProductToSale) //SaleController.go
+		protected.POST("sales/finish", controllers.SaleFinish) //SaleController.go
+		protected.PUT("sales/:sale_id/update-price", controllers.UpdatePriceSale) //SaleController.go
+		protected.DELETE("sales/:sale_id", controllers.DestroySale) //SaleController.go
+		protected.GET("ppn", controllers.GetPPN) //PPNController.go
+		protected.POST("ppn", controllers.StorePPN) //PPNController.go
+		protected.PUT("ppn/:ppn_id", controllers.UpdatePPN) //PPNController.go
+		protected.DELETE("ppn/:ppn_id", controllers.DeletePPN) //PPNController.go
+		//B2B
+		// protected.GET("bulky-documents", controllers.GetBulkyDocuments) //DocumentController.go
 		//Buyer
 		protected.GET("monthly-buyer", controllers.GetBuyerMonthlyPoints) //BuyerController.go
 		protected.GET("summary-buyer", controllers.GetBuyerSummary) //BuyerController.go
@@ -173,6 +182,14 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("scraps/:scrap_id/product/:barcode", controllers.AddProductToScrap) //DocumentController.go
 		protected.POST("scraps/:scrap_id/lock", controllers.LockScrapDocument) //DocumentController.go
 		protected.POST("scraps/:scrap_id/finish", controllers.FinishScrapDocument) //DocumentController.go
+
+		/* ==================== ACCOUNT ==================== */
+		//Account Setting
+		protected.GET("/users", controllers.GetUsers) //UserController.go
+		protected.GET("/roles", controllers.GetRoles) //UserController.go
+		protected.POST("/users", controllers.CreateUser) //UserController.go
+		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
+		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
 
 		/* ==================== GENERALE ==================== */
 		//Account Setting

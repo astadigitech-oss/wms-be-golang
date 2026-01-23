@@ -4,24 +4,24 @@ import "time"
 
 type SaleDocument struct {
 	ID uint64 `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	UserID uint64 `gorm:"column:user_id;not null" json:"user_id"`
+	UserID uint64 `gorm:"column:user_id;not null;index" json:"user_id"`
 	CodeDocumentSale string `gorm:"column:code_document_sale;type:varchar(255);not null;unique" json:"code_document_sale"`
 
-	BuyerIDDocumentSale      uint64 `gorm:"column:buyer_id_document_sale;not null" json:"buyer_id_document_sale"`
-	BuyerNameDocumentSale    string `gorm:"column:buyer_name_document_sale;type:varchar(255);not null" json:"buyer_name_document_sale"`
-	BuyerPhoneDocumentSale   string `gorm:"column:buyer_phone_document_sale;type:varchar(255);not null" json:"buyer_phone_document_sale"`
-	BuyerAddressDocumentSale string `gorm:"column:buyer_address_document_sale;type:varchar(255);not null" json:"buyer_address_document_sale"`
-	BuyerPointDocumentSale   int64  `gorm:"column:buyer_point_document_sale;not null" json:"buyer_point_document_sale"`
+	BuyerID      uint64 `gorm:"not null;index" json:"buyer_id"`
+	BuyerName    string `gorm:"type:varchar(100);not null" json:"buyer_name"`
+	BuyerPhone   string `gorm:"type:varchar(25);not null" json:"buyer_phone"`
+	BuyerAddress string `gorm:"type:varchar(255);not null" json:"buyer_address"`
+	BuyerPoint   int64  `gorm:"not null" json:"buyer_point"`
 
 	NewDiscountSale *float64 `gorm:"column:new_discount_sale;type:double(15,2)" json:"new_discount_sale,omitempty"`
 	TypeDiscount    *string  `gorm:"column:type_discount;type:enum('new','old')" json:"type_discount,omitempty"`
 
-	TotalProductDocumentSale      int64   `gorm:"column:total_product_document_sale;not null" json:"total_product_document_sale"`
-	TotalOldPriceDocumentSale     float64 `gorm:"column:total_old_price_document_sale;type:decimal(15,2);not null" json:"total_old_price_document_sale"`
-	TotalPriceDocumentSale        float64 `gorm:"column:total_price_document_sale;type:decimal(15,2);not null" json:"total_price_document_sale"`
-	TotalDisplayDocumentSale      float64 `gorm:"column:total_display_document_sale;type:decimal(15,2);not null" json:"total_display_document_sale"`
+	TotalProduct      int64   `gorm:"not null" json:"total_product"`
+	TotalOldPrice     float64 `gorm:"type:decimal(15,2);not null" json:"total_old_price"`
+	TotalPrice        float64 `gorm:"type:decimal(15,2);not null" json:"total_price"`
+	TotalDisplay      float64 `gorm:"type:decimal(15,2);not null" json:"total_display"`
 
-	StatusDocumentSale string `gorm:"column:status_document_sale;type:enum('proses','selesai');not null;default:'proses'" json:"status_document_sale"`
+	Status string `gorm:"type:enum('proses','selesai');not null;default:'proses'" json:"status"`
 
 	CardboxQty        *int     `gorm:"column:cardbox_qty;type:int" json:"cardbox_qty,omitempty"`
 	CardboxUnitPrice  *float64 `gorm:"column:cardbox_unit_price;type:decimal(15,2)" json:"cardbox_unit_price,omitempty"`
@@ -42,4 +42,6 @@ type SaleDocument struct {
 
 	//relation
 	User *User `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
+	Sales []Sale `gorm:"foreignKey:SaleDocumentID;references:ID" json:"sales,omitempty"`
+	Buyer *Buyer `gorm:"foreignKey:BuyerID;references:ID" json:"buyer,omitempty"`
 }

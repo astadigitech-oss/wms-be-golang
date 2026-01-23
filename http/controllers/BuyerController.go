@@ -18,6 +18,128 @@ import (
 	// "github.com/go-playground/validator/v10"
 )
 
+// ===================== OUTBOUND ====================
+//sale
+func GetBuyers(c *gin.Context) {
+	q := c.Query("q")
+
+	limit := 50
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	offset := (page - 1) * limit
+
+	db := config.DB
+
+	// month & year
+	now := time.Now()
+	month, _ := strconv.Atoi(c.DefaultQuery("month", strconv.Itoa(int(now.Month()))))
+	year, _ := strconv.Atoi(c.DefaultQuery("year", strconv.Itoa(now.Year())))
+
+	// BASE QUERY BUYER
+	baseQuery := db.Model(&models.Buyer{}).
+		Preload("Rank")
+
+	if q != "" {
+		baseQuery = baseQuery.Where(`
+			name_buyer LIKE ?
+			OR phone_buyer LIKE ?
+			OR address_buyer LIKE ?
+			OR type_buyer LIKE ?
+		`,
+			"%"+q+"%",
+			"%"+q+"%",
+			"%"+q+"%",
+			"%"+q+"%",
+		)
+	}
+
+	// COUNT TOTAL DATA
+	var total int64
+	if err := baseQuery.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "gagal hitung total buyer", "error": err.Error()})
+		return
+	}
+
+	// AMBIL BUYER + MONTHLY POINT
+	type buyerRow struct {
+		models.Buyer
+		MonthlyPoint int64
+	}
+
+	var rows []buyerRow
+
+	if err := baseQuery.
+		Select(`
+			buyers.*,
+			COALESCE(SUM(sale_documents.buyer_point), 0) AS monthly_point
+		`).
+		Joins(`
+			LEFT JOIN sale_documents
+			ON sale_documents.buyer_id = buyers.id
+			AND sale_documents.status = 'selesai'
+			AND MONTH(sale_documents.created_at) = ?
+			AND YEAR(sale_documents.created_at) = ?
+		`, month, year).
+		Group("buyers.id").
+		Order("monthly_point DESC").
+		Order("name_buyer ASC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).Error; err != nil {
+
+		c.JSON(500, gin.H{"success": false, "message": "gagal ambil data buyer"})
+		return
+	}
+
+	// HITUNG MONTHLY RANK
+	type BuyerRankingDTO struct {
+		models.Buyer
+		MonthlyPoint         int64 `json:"monthly_point"`
+		MonthlyRankPosition int64 `json:"monthly_rank_position"`
+	}
+
+	var result []BuyerRankingDTO
+
+	for _, row := range rows {
+		var higherRankCount int64
+
+		db.Model(&models.SaleDocument{}).
+			Select("buyer_id").
+			Where(`
+				status = 'selesai'
+				AND MONTH(created_at) = ?
+				AND YEAR(created_at) = ?
+			`, month, year).
+			Group("buyer_id").
+			Having("SUM(buyer_point) > ?", row.MonthlyPoint).
+			Count(&higherRankCount)
+
+		result = append(result, BuyerRankingDTO{
+			Buyer:                 row.Buyer,
+			MonthlyPoint:          row.MonthlyPoint,
+			MonthlyRankPosition: higherRankCount + 1,
+		})
+	}
+
+	// PAGINATION META
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	// RESPONSE
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("List data buyer ranking periode %d-%d", month, year),
+		"data": gin.H{
+			"current_page": page,
+			"per_page":     limit,
+			"total":        total,
+			"last_page":    lastPage,
+			"data":         result,
+			"links":        links,
+		},
+	})
+}
+
+//buyer
 func GetBuyerSummary(c *gin.Context) {
 	defer func() {
 		if r := recover(); r != nil {
