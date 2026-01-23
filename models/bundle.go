@@ -4,12 +4,12 @@ import "time"
 
 type Bundle struct {
 	ID              uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	UserID          *uint64    `json:"user_id"`
+	UserID          *uint64    `gorm:"index" json:"user_id"`
 	NameBundle      string    `gorm:"size:255;not null" json:"name_bundle"`
 	TotalPrice      float64   `gorm:"type:decimal(18,2);default:0" json:"total_price"` //total old price productnya
 	TotalPriceCustom float64  `gorm:"type:decimal(18,2);default:0" json:"total_price_custom"` //harga setelah diskon category
 	TotalProduct    int64     `gorm:"default:0" json:"total_product"`
-	Status          string    `gorm:"size:50;type:enum('not sale', 'sale', 'bundle', 'draft');default:'not sale'" json:"status"`
+	Status          string    `gorm:"size:50;type:enum('not sale', 'sale', 'bundle', 'draft');not null" json:"status"`
 	Barcode         string    `gorm:"size:255;unique;not null" json:"barcode"`
 	CategoryID      *uint64    `json:"category_id"`
 	TagColorID      *uint64    `json:"tag_color_id"`
@@ -21,7 +21,8 @@ type Bundle struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 
 	//relations
+	User  *User  `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Category *Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
 	ColorTag *ColorTag  `gorm:"foreignKey:TagColorID" json:"color_tag,omitempty"`
-	Items    []BundleItem `gorm:"foreignKey:BundleID" json:"items"`
+	Items    []BundleItem `gorm:"foreignKey:BundleID" json:"items,omitempty"`
 }

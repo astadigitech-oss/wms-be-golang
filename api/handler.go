@@ -101,13 +101,15 @@ func RouteHandler(r *gin.Engine) {
 		protected.POST("/bundles", controllers.CreateBundleProduct) //BundleController.go
 		protected.POST("/bundle/filter-product/:id", controllers.BundleAddFilterProduct) //BundleController.go
 		protected.PUT("/bundles/:bundle_id", controllers.UpdateBundle) //BundleController.go
-		protected.DELETE("/bundle/:bundle_id/product-bundle/:product_id", controllers.DeleteProductBundle) //BundleController.go
+		protected.DELETE("/bundle/items/:item_id", controllers.DeleteProductBundle) //BundleController.go
 		protected.DELETE("/bundles/:bundle_id", controllers.Unbundle) //BundleController.go
 		protected.DELETE("/bundle/filter-product/:id", controllers.BundleDeleteFilterProduct) //BundleController.go
 		//====================
 		//Moving Product -> repair
 		protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
 		protected.GET("/repair-bundle/filter-product", controllers.GetRepairFilterProduct) //BundleController.go
+		protected.PUT("/repair-items/:item_id/update", controllers.UpdateRepairProduct) //BundleController.go
+		protected.PUT("/repair-items/:item_id/to-display", controllers.ProductRepairToDisplay) //BundleController.go
 		protected.PUT("/repair-items/:item_id/dump", controllers.DumpProductRepair) //BundleController.go
 		//Slow Moving Product -> promo
 		protected.GET("/promos", controllers.GetPromos) // ProductController.go

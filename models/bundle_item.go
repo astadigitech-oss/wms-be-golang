@@ -13,7 +13,7 @@ type BundleItem struct {
 	UpdatedAt time.Time `json:"updated_at"`
 
 	//relations
-	User  *Bundle  `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	User  *User  `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Bundle  *Bundle  `gorm:"foreignKey:BundleID" json:"bundle,omitempty"`
 	Product *Product `gorm:"foreignKey:ProductID" json:"product,omitempty"`
 }
