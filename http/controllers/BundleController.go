@@ -602,6 +602,7 @@ func CreateBundleProduct(c *gin.Context) {
 		TotalPriceCustom: totalPriceCustom,
 		TotalProduct: int64(len(bundleItems)),
 		BundleType: payload.BundleType,
+		Status: "not_sale",
 	}
 
 	if payload.BundleType == "bundle" {		
@@ -813,7 +814,7 @@ func UpdateBundle(c *gin.Context) {
 
 	updateData := map[string]interface{}{
 		"name_bundle":   payload.NameBundle,
-		"status":   "not sale",
+		"status":   "not_sale",
 	}
 
 	if payload.BundleType == "bundle" {		

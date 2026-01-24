@@ -1711,10 +1711,9 @@ func GetDetailProduct(c *gin.Context) {
     // Ambil data detail
     if err := baseQuery.First(&product).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
-            c.JSON(500, gin.H{"success": false, "message": "Product tidak ditemukan"})
+            c.JSON(404, gin.H{"success": false, "message": "Product tidak ditemukan"})
         }else {
-            c.JSON(500, gin.H{"success": false, "message": "Product tidak ditemukan"})
-    
+            c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil product", "error": err.Error()})
         }
 
         return
@@ -1812,7 +1811,7 @@ func GetProductsByCategory(c *gin.Context) {
 				b.total_price_custom AS price,
 				b.created_at,
 				CASE 
-					WHEN b.status = 'not sale' THEN 'display'
+					WHEN b.status = 'not_sale' THEN 'display'
 					ELSE b.status
 				END AS status,
 				b.total_price_custom AS display_price,
@@ -1869,7 +1868,7 @@ func GetProductsByCategory(c *gin.Context) {
                 b.name_bundle AS name,
                 c.name_category AS name_category,
                 CASE 
-                    WHEN b.status = 'not sale' THEN 'display'
+                    WHEN b.status = 'not_sale' THEN 'display'
                     ELSE b.status
                 END AS status
             FROM bundles b
