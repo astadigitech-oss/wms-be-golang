@@ -67,6 +67,7 @@ func GetBundles(c *gin.Context) {
 			"status":  true,
 			"message": "List bundle",
 			"resource": gin.H{
+				"current_page": 	page,
                 "total_data":           totalData,
                 "data":                 bundles,
 				"from":           offset + 1,
