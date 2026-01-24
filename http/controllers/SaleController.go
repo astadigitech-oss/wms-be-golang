@@ -388,6 +388,312 @@ func SaleIndex(c *gin.Context) {
 // 	}))
 // }
 
+// func AddProductToSaleDocument(c *gin.Context) {
+// 	user := c.MustGet("auth_user").(models.User)
+
+// 	type payloadRequest struct {
+// 		SaleBarcode  string   `json:"sale_barcode" binding:"required"`
+// 		SaleDocumentID      uint64   `json:"sale_document_id" binding:"required,numeric"`
+// 		TypeDiscount *string  `json:"type_discount" binding:"omitempty,oneof=new old"`
+// 	}
+
+// 	var req payloadRequest
+// 	if err := c.ShouldBindJSON(&req); err != nil {
+
+// 		ve, ok := err.(validator.ValidationErrors)
+// 		if !ok {
+// 			c.JSON(http.StatusBadRequest, gin.H{
+// 				"success": false,
+// 				"message": "Format JSON tidak valid",
+// 			})
+// 			return
+// 		}
+
+// 		errorsMap := make(map[string]string)
+
+// 		for _, e := range ve {
+// 			field := e.Field()
+
+// 			switch field {
+// 			case "SaleBarcode":
+// 				errorsMap["sale_barcode"] = "Barcode wajib diisi"
+
+// 			case "SaleDocumentID":
+// 				errorsMap["sale_document_id"] = "Sale Document ID wajib diisi dan berupa numerik"
+
+// 			case "TypeDiscount":
+// 				errorsMap["type_discount"] = "Type discount harus bernilai 'new' atau 'old'"
+
+// 			default:
+// 				errorsMap[strings.ToLower(field)] =
+// 					"Validasi gagal pada field " + field
+// 			}
+// 		}
+
+// 		c.JSON(http.StatusUnprocessableEntity, gin.H{
+// 			"success": false,
+// 			"message": "Validasi gagal",
+// 			"errors": errorsMap,
+// 		})
+// 		return
+// 	}
+
+// 	defer func() {
+// 		if r := recover(); r != nil {
+
+// 			stack := debug.Stack() // ← full stack trace
+
+// 			// log ke file / stdout
+// 			fmt.Printf("PANIC: %v\n%s\n", r, stack)
+
+// 			c.JSON(http.StatusInternalServerError, gin.H{
+// 				"success": false,
+// 				"message": "Terjadi kesalahan internal",
+// 				// JANGAN kirim stack ke client di production
+// 			})
+// 		}
+// 	}()
+
+// 	// db := config.DB
+
+// 	tx := config.DB.WithContext(c.Request.Context()).Begin()
+// 	if tx.Error != nil {
+// 		c.JSON(http.StatusInternalServerError, gin.H{
+// 			"success": false,
+// 			"message": "Failed to start database transaction",
+// 		})
+// 		return
+// 	}
+
+// 	/* ===========================
+// 	FIND PRODUCT OR BUNDLE
+// 	=========================== */
+// 	var (
+// 		product       models.Product
+// 		bundle        models.Bundle
+// 		isBundle      bool
+// 		barcodeItem   string
+// 		newPrice      float64
+// 		oldPrice      float64
+// 		discount      float64
+// 		totalAfterDiscount      float64
+// 		grandTotalPrice      float64
+// 		productAfterDiscount      float64
+// 	)
+
+// 	var sale_document models.SaleDocument
+// 	if err := tx.First(&sale_document, req.SaleDocumentID).Error; err != nil {
+// 		tx.Rollback()
+// 		c.JSON(404, gin.H{
+// 			"success": false,
+// 			"message": "Sale Document tidak ditemukan",
+// 		})
+// 		return
+// 	}
+
+// 	discount = *sale_document.NewDiscountSale
+
+// 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+// 		Preload("ProductOld").
+// 		Preload("Category").
+// 		Where("barcode = ?", req.SaleBarcode).
+// 		First(&product).Error
+
+// 	if err != nil {
+// 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+// 			Preload("Category").
+// 			Where("barcode = ?", req.SaleBarcode).
+// 			First(&bundle).Error; err != nil {
+
+// 			tx.Rollback()
+// 			c.JSON(404, gin.H{
+// 				"success": false,
+// 				"message": "Produk / bundle tidak ditemukan",
+// 			})
+// 			return
+// 		}
+// 		isBundle = true
+// 	}
+
+// 	if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
+// 		tx.Rollback()
+// 		c.JSON(400, gin.H{
+// 			"success": false,
+// 			"message": "Product / bundle sudah dimasukkan ke penjualan",
+// 		})
+// 		return
+// 	}
+
+// 	/* ===========================
+// 	PRICE SETUP
+// 	=========================== */
+// 	if isBundle {
+// 		oldPrice = bundle.TotalPrice
+// 		newPrice = bundle.TotalPriceCustom
+// 		barcodeItem = bundle.Barcode
+// 		productAfterDiscount = newPrice * (1 - (discount / 100.0))
+// 		totalAfterDiscount = productAfterDiscount + sale_document.TotalPrice
+
+// 		discount_category := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
+// 		discount_category = math.Round(discount_category)
+// 		if discount_category > product.Category.MaxPriceCategory {
+// 			discount_category = product.Category.MaxPriceCategory
+// 		} 
+
+// 		expectedPrice := product.ProductOld.OldPriceProduct - discount_category
+
+// 		if bundle.TotalPriceCustom != expectedPrice {
+// 			tx.Rollback()
+// 			c.JSON(400, gin.H{
+// 				"success": false,
+// 				"message": "Harga bundle tidak sesuai",
+// 				"barcode": barcodeItem,
+// 				"price_now": bundle.TotalPriceCustom,
+// 				"expected_price": expectedPrice,
+// 			})
+// 			return
+// 		}
+// 	} else {
+// 		oldPrice = product.ProductOld.OldPriceProduct
+// 		newPrice = product.Price
+// 		barcodeItem = product.Barcode
+// 		productAfterDiscount = newPrice * (1 - (discount / 100.0))
+// 		totalAfterDiscount = productAfterDiscount + sale_document.TotalPrice
+
+// 		discount_category := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
+// 		discount_category = math.Round(discount_category)
+// 		if discount_category > product.Category.MaxPriceCategory {
+// 			discount_category = product.Category.MaxPriceCategory
+// 		} 
+// 		expectedPrice := product.ProductOld.OldPriceProduct - discount_category
+
+// 		if product.Price != expectedPrice {
+// 			tx.Rollback()
+// 			c.JSON(400, gin.H{
+// 				"success": false,
+// 				"message": "Harga product tidak sesuai",
+// 				"barcode": barcodeItem,
+// 				"price_now": product.Price,
+// 				"expected_price": expectedPrice,
+// 				"discount": discount,
+// 			})
+// 			return
+// 		}
+// 	}
+
+// 	if sale_document.NewDiscountSale != nil && *sale_document.NewDiscountSale > 0 {
+
+// 		if req.TypeDiscount != nil && *req.TypeDiscount == "old" {
+// 			productAfterDiscount = newPrice * (1 - (discount / 100.0))
+// 			totalAfterDiscount = productAfterDiscount + sale_document.TotalPrice
+// 			grandTotalPrice = totalAfterDiscount
+// 		}
+// 	}
+
+// 	//tambah biaya karton box
+// 	grandTotalPrice += *sale_document.CardboxTotalPrice
+
+// 	//hitung pajak
+// 	tax := grandTotalPrice * (*sale_document.Tax / 100.0)
+// 	grandTotalPrice += tax
+
+// 	/* ===========================
+// 	TOTAL SALE CHECK
+// 	=========================== */
+// 	var totalPriceSale float64
+// 	if err := tx.Model(&models.Sale{}).
+// 		Select("COALESCE(SUM(base_price),0)").
+// 		Where("user_id = ? AND status_sale = 'proses'", user.ID).
+// 		Scan(&totalPriceSale).Error; err != nil {
+
+// 		tx.Rollback()
+// 		c.JSON(500, gin.H{"success": false, "message": err.Error()})
+// 		return
+// 	}
+
+// 	newTotal := totalPriceSale + basePrice
+
+// 	if newTotal >= 5000000 {
+// 		var discountLoyalty float64
+
+// 		if buyer.TransactionCount == 0 {
+// 			discountLoyalty = 0
+// 		} else {
+// 			discountLoyalty = buyer.Rank.PercentageDiscount
+// 		}
+
+// 		if discountLoyalty > 0 {
+// 			if err := tx.Model(&models.Sale{}).
+// 				Where("sale_document_id = ?", saleDoc.ID).
+// 				Update(
+// 					"product_price_sale",
+// 					gorm.Expr("base_price * (1 - ? / 100)", discountLoyalty),
+// 				).Error; err != nil {
+
+// 				tx.Rollback()
+// 				c.JSON(500, gin.H{"success": false, "message": err.Error()})
+// 				return
+// 			}
+
+// 			loyaltyDiscount := basePrice * (discountLoyalty / 100)
+// 			totalDiscount += loyaltyDiscount
+// 			productPriceSale = basePrice - loyaltyDiscount
+// 		}
+// 	}
+
+// 	/* ===========================
+// 	INSERT SALE
+// 	=========================== */
+// 	sale := models.Sale{
+// 		UserID:            uint64(user.ID),
+// 		SaleDocumentID:    saleDoc.ID,
+// 		BarcodeItem:       barcodeItem,
+// 		ProductPriceSale:  math.Ceil(productPriceSale),
+// 		BasePrice:         math.Ceil(basePrice),
+// 		TotalDiscountSale: math.Ceil(totalDiscount),
+// 		DiscountSale:      discount,
+// 		TypeDiscount:      req.TypeDiscount,
+// 		StatusSale:        "proses",
+// 	}
+
+// 	if err := tx.Create(&sale).Error; err != nil {
+// 		tx.Rollback()
+// 		c.JSON(500, gin.H{"success": false, "message": "Gagal insert sale"})
+// 		return
+// 	}
+
+// 	/* ===========================
+// 	UPDATE STATUS
+// 	=========================== */
+// 	if !isBundle {
+// 		if err := tx.Model(&product).Update("status", "sale").Error; err != nil {
+// 			tx.Rollback()
+// 			c.JSON(500, gin.H{"success": false, "message": err.Error()})
+// 			return
+// 		}
+// 	} else {
+// 		if err := tx.Model(&bundle).Update("status", "sale").Error; err != nil {
+// 			tx.Rollback()
+// 			c.JSON(500, gin.H{"success": false, "message": err.Error()})
+// 			return
+// 		}
+// 	}
+
+// 	/* ===========================
+// 	COMMIT
+// 	=========================== */
+// 	if err := tx.Commit().Error; err != nil {
+// 		c.JSON(500, gin.H{"success": false, "message": "Gagal commit transaksi"})
+// 		return
+// 	}
+
+// 	c.JSON(200, gin.H{
+// 		"success": true,
+// 		"message": "Item berhasil ditambahkan ke penjualan",
+// 	})
+
+// }
+
 func StoreProductToSale(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
@@ -743,8 +1049,7 @@ func UpdatePriceSale(c *gin.Context) {
 	// Ambil sale (route param)
 	// ===========================
 	if err := config.DB.
-		Where("id = ? AND status_sale = 'proses'", c.Param("sale_id")).
-		First(&sale).Error; err != nil {
+		First(&sale, c.Param("sale_id")).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {		
 			c.JSON(404, gin.H{
@@ -914,7 +1219,7 @@ func DestroySale(c *gin.Context) {
 		if res.RowsAffected == 0 {
 			res = tx.Model(&models.Bundle{}).
 				Where("barcode = ?", sale.BarcodeItem).
-				Update("status", "not sale")
+				Update("status", "not_sale")
 
 			if res.Error != nil {
 				return res.Error

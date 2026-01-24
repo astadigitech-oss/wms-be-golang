@@ -94,8 +94,8 @@ func RouteHandler(r *gin.Engine) {
 		protected.DELETE("/color_tags/:id", controllers.DeleteTagColor) //ColorTagController.go
 		//Moving Product -> bundle
 		protected.GET("/bundles", controllers.GetBundles) //BundleController.go
+		protected.GET("/bundle/product-type-colors", controllers.GetProductTypeColor) //BundleController.go
 		protected.GET("/bundle/filter-product", controllers.GetBundleFilterProduct) //BundleController.go
-		//====================
 		protected.GET("/bundles/:bundle_id/detail", controllers.GetBundleDetail) //BundleController.go 
 		protected.POST("/bundle/:bundle_id/product-bundle/:product_id", controllers.AddProductBundle) //BundleController.go 
 		protected.POST("/bundles", controllers.CreateBundleProduct) //BundleController.go
@@ -106,11 +106,11 @@ func RouteHandler(r *gin.Engine) {
 		protected.DELETE("/bundle/filter-product/:id", controllers.BundleDeleteFilterProduct) //BundleController.go
 		//====================
 		//Moving Product -> repair
-		protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
-		protected.GET("/repair-bundle/filter-product", controllers.GetRepairFilterProduct) //BundleController.go
-		protected.PUT("/repair-items/:item_id/update", controllers.UpdateRepairProduct) //BundleController.go
-		protected.PUT("/repair-items/:item_id/to-display", controllers.ProductRepairToDisplay) //BundleController.go
-		protected.PUT("/repair-items/:item_id/dump", controllers.DumpProductRepair) //BundleController.go
+		// protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
+		// protected.GET("/repair-bundle/filter-product", controllers.GetRepairFilterProduct) //BundleController.go
+		// protected.PUT("/repair-items/:item_id/update", controllers.UpdateRepairProduct) //BundleController.go
+		// protected.PUT("/repair-items/:item_id/to-display", controllers.ProductRepairToDisplay) //BundleController.go
+		// protected.PUT("/repair-items/:item_id/dump", controllers.DumpProductRepair) //BundleController.go
 		//Slow Moving Product -> promo
 		protected.GET("/promos", controllers.GetPromos) // ProductController.go
 		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
@@ -162,6 +162,7 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("sales", controllers.SaleIndex) //SaleController.go
 		protected.GET("sale/buyers", controllers.GetBuyers) //BuyerController.go
 		protected.GET("sale/products", controllers.GetProductsForSale) //ProductController.go
+		// protected.POST("sale-document/add-products", controllers.AddProductToSaleDocument) //SaleController.go
 		protected.POST("sale/products/add", controllers.StoreProductToSale) //SaleController.go
 		protected.POST("sales/finish", controllers.SaleFinish) //SaleController.go
 		protected.PUT("sales/:sale_id/update-price", controllers.UpdatePriceSale) //SaleController.go

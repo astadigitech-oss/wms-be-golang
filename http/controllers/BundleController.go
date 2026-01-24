@@ -80,6 +80,96 @@ func GetBundles(c *gin.Context) {
 	})
 }
 
+func GetProductTypeColor(c *gin.Context) {
+    q := strings.TrimSpace(c.Query("q"))
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	//inisialisasi query
+	baseQuery := config.DB.Model(&models.Product{}).
+        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
+        Where("products.status IN ?", []string{"display", "expired"}).
+        Where("products.location_type = ?", "main").
+        Where("products.category_id IS NULL").
+        Where("products.tag_color_id IS NOT NULL").
+        Where("products.quality = ?", "lolos").
+        Where("(products.warehouse_type IS NULL OR products.warehouse_type = 'type1')")
+
+	// Searching (misalnya, mencari berdasarkan nama atau email)
+	if q != "" {
+		searchPattern := "%" + q + "%"
+		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
+            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.name LIKE ? OR " + 
+            "products.code_document LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+    // Paginate Data
+    type productsData struct {
+        ID          uint64  `json:"id"`
+        OldBarcode  string  `json:"old_barcode"`
+        NewBarcode     string  `json:"new_barcode"`
+        Name        string  `json:"name"`
+        Price       float64 `json:"price"`
+        OldPrice       float64 `json:"old_price"`
+        Status      string  `json:"status"`
+        Category   *string  `json:"category"`
+    }
+
+    var products []productsData
+	var totalData int64
+
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
+    // Ambil data detail
+    err := baseQuery.Session(&gorm.Session{}).
+        Select(`
+            products.id, 
+            product_olds.old_barcode_product AS old_barcode, 
+            products.barcode AS new_barcode, 
+            products.name AS name, 
+            products.price AS price, 
+            product_olds.old_price_product AS old_price, 
+            products.status AS status, 
+            color_tags.name_color AS category
+        `).
+        Order("products.created_at DESC").
+        Limit(limit).Offset(offset).
+        Find(&products).Error
+
+    if err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+        return
+    }
+
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+	// pagination links
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(200, gin.H{
+		"data": gin.H{
+			"status":  true,
+			"message": "List Product Display & Expired",
+			"resource": gin.H{
+                "total_data":           totalData,
+                "data":                 products,
+				"from":           offset + 1,
+				"last_page":      lastPage,
+				"links":          links,
+				"per_page":       limit,
+				"to":             offset + len(products),
+				"total":          totalData,
+			},
+		},
+	})
+}
+
 func GetBundleDetail(c *gin.Context) {
     bundle_id := c.Param("bundle_id")
 
@@ -274,6 +364,8 @@ func AddProductBundle(c *gin.Context) {
 	var product models.Product
     if err := tx.Preload("ProductOld").
 		Where("status IN ?", []string{"display", "expired"}).
+		Where("category_id IS NULL").
+		Where("tag_color_id IS NOT NULL").
 		Where("location_type = ?", "main").
 		First(&product, productID).Error; err != nil {
         tx.Rollback()
@@ -489,7 +581,7 @@ func CreateBundleProduct(c *gin.Context) {
 
     type payloadRequest struct {
         NameBundle string  `json:"name_bundle" binding:"required"`
-        BundleType string  `json:"bundle_type" binding:"required,oneof=bundle repair qcd"`
+        BundleType string  `json:"bundle_type" binding:"required,oneof=bundle"`
         CategoryID *uint64 `json:"category_id"`
         TagColorID *uint64 `json:"tag_color_id"`
         CustomPrice *float64 `json:"custom_price"`
@@ -515,7 +607,7 @@ func CreateBundleProduct(c *gin.Context) {
 					if e.Tag() == "required" {
 						errors["bundle_type"] = "Bundle type wajib diisi"
 					}else if e.Tag() == "oneof" {
-						errors["bundle_type"] = "Bundle type harus salah satu dari: bundle, repair, atau qcd"
+						errors["bundle_type"] = "Bundle type harus bundle"
 					}
 			}
 		}
@@ -609,6 +701,12 @@ func CreateBundleProduct(c *gin.Context) {
 	if payload.BundleType == "bundle" {		
 		if totalPrice >= 100000 {
 			bundle.ColorTag = nil
+			if payload.CategoryID == nil {
+				tx.Rollback()
+				c.JSON(400, gin.H{"status": false, "message":"Total price > 100k, wajib mengisi category id"})
+				return
+			}
+
 			var category models.Category
 			if err := tx.Where("id = ?", payload.CategoryID).First(&category).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -630,6 +728,12 @@ func CreateBundleProduct(c *gin.Context) {
 			bundle.CategoryID = payload.CategoryID
 		} else {
 			bundle.CategoryID = nil
+			if payload.TagColorID == nil {
+				tx.Rollback()
+				c.JSON(400, gin.H{"status": false, "message":"Total price kurang dari 100k, wajib mengisi tag color id"})
+				return
+			}
+
 			var color_tag models.ColorTag
 			if err := tx.Where("id = ?", payload.TagColorID).First(&color_tag).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -644,7 +748,7 @@ func CreateBundleProduct(c *gin.Context) {
 	
 			if totalPrice < color_tag.MinPriceColor || totalPrice > color_tag.MaxPriceColor {
 				tx.Rollback()
-				c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": "harga produk tidak masuk rentang color tag"})
+				c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": "total price bundle tidak masuk rentang color tag"})
 				return
 			}
 	
@@ -939,7 +1043,11 @@ func BundleAddFilterProduct(c *gin.Context) {
 
 	productID, _ := strconv.ParseUint(id, 10, 64)
     var product models.Product
-    if err := config.DB.Where("status IN ?", []string{"display", "expired"}).Where("location_type = ?", "main").First(&product, productID).Error; err != nil {
+    if err := config.DB.Where("status IN ?", []string{"display", "expired"}).
+		Where("location_type = ?", "main").
+		Where("category_id IS NULL").
+		Where("tag_color_id IS NOT NULL").
+		First(&product, productID).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
             c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "product tidak ditemukan"})
             return
