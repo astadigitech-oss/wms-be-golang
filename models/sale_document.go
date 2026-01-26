@@ -19,23 +19,23 @@ type SaleDocument struct {
 	TotalProduct      int64   `gorm:"not null" json:"total_product"`
 	TotalOldPrice     float64 `gorm:"type:decimal(15,2);not null" json:"total_old_price"`
 	TotalPrice        float64 `gorm:"type:decimal(15,2);not null" json:"total_price"`
-	TotalDisplay      float64 `gorm:"type:decimal(15,2);not null" json:"total_display"`
+	TotalDisplayPrice      float64 `gorm:"type:decimal(15,2);not null" json:"total_display_price"`
 
 	Status string `gorm:"type:enum('proses','selesai');not null;default:'proses'" json:"status"`
 
-	CardboxQty        *int     `gorm:"column:cardbox_qty;type:int" json:"cardbox_qty,omitempty"`
-	CardboxUnitPrice  *float64 `gorm:"column:cardbox_unit_price;type:decimal(15,2)" json:"cardbox_unit_price,omitempty"`
-	CardboxTotalPrice *float64 `gorm:"column:cardbox_total_price;type:decimal(15,2)" json:"cardbox_total_price,omitempty"`
+	CardboxQty        int     `gorm:"column:cardbox_qty;type:int;default:0" json:"cardbox_qty,omitempty"`
+	CardboxUnitPrice  float64 `gorm:"column:cardbox_unit_price;type:decimal(15,2);default:0" json:"cardbox_unit_price,omitempty"`
+	CardboxTotalPrice float64 `gorm:"column:cardbox_total_price;type:decimal(15,2);default:0" json:"cardbox_total_price,omitempty"`
 
 	Voucher      *float64 `gorm:"column:voucher;type:decimal(15,2)" json:"voucher,omitempty"`
-	CodeDocument *string  `gorm:"column:code_document;type:varchar(255)" json:"code_document,omitempty"`
 
 	Approved string `gorm:"column:approved;type:enum('0','1','2');default:'0'" json:"approved"`
 
 	IsTax bool `gorm:"column:is_tax;type:tinyint(1);default:0" json:"is_tax"`
 
 	Tax           *float64 `gorm:"column:tax;type:decimal(5,2)" json:"tax,omitempty"`
-	PriceAfterTax *float64 `gorm:"column:price_after_tax;type:decimal(15,2)" json:"price_after_tax,omitempty"`
+	GrandTotalPrice float64 `gorm:"column:grand_total_price;type:decimal(15,2);default:0;" json:"grand_total_price"`
+	PriceAfterTax float64 `gorm:"column:price_after_tax;type:decimal(15,2);default:0" json:"price_after_tax"`
 
 	CreatedAt *time.Time `gorm:"column:created_at" json:"created_at,omitempty"`
 	UpdatedAt *time.Time `gorm:"column:updated_at" json:"updated_at,omitempty"`

@@ -545,7 +545,7 @@ func ProcessLoyalty(
 	totalDisplayPrice float64,
 ) error {
 
-	if totalDisplayPrice < 1 {
+	if totalDisplayPrice < 5000000 {
 		return nil
 	}
 
@@ -590,9 +590,8 @@ func ProcessLoyalty(
 		previousRankID = buyer.LoyaltyRankID
 	}
 
-	expire := now.AddDate(0, 0, eligibleRank.ExpiredWeeks*7)
-
-	if buyer.TransactionCount == 0 {
+	if eligibleRank.ExpiredWeeks > 0 {
+		expire := now.AddDate(0, 0, eligibleRank.ExpiredWeeks*7)
 		updateData["expire_date"] = expire
 	}
 
@@ -628,3 +627,253 @@ func ProcessLoyalty(
 
 	return nil
 }
+
+type RankInfoResult struct {
+	CurrentRank       *models.LoyaltyRank
+	NextRank          *models.LoyaltyRank
+	TransactionCount  int
+	ExpireDate        *time.Time
+	DiscountPercent   float64
+}
+
+func GetCurrentRankInfo(
+	db *gorm.DB,
+	buyerID uint,
+	currentTransactionDate *time.Time,
+) (*RankInfoResult, error) {
+
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+
+	// =========================
+	// Load Rank
+	// =========================
+	var allRanks []models.LoyaltyRank
+	if err := db.Order("min_transactions asc").Find(&allRanks).Error; err != nil {
+		return nil, err
+	}
+
+	// =========================
+	// Load Buyer
+	// =========================
+	var buyer models.Buyer
+	if err := db.Preload("Rank").
+		First(&buyer, buyerID).Error; err != nil {
+		return nil, err
+	}
+
+	// =========================
+	// 3. Buyer Special
+	// =========================
+	specialBuyers := map[uint]bool{
+		496: true,
+	}
+
+	if specialBuyers[buyerID] {
+		var currentRank *models.LoyaltyRank
+		if buyer.LoyaltyRankID == nil || buyer.Rank == nil {
+			currentRank = &allRanks[0]
+		} else {
+			currentRank = buyer.Rank
+		}
+
+		var nextRank *models.LoyaltyRank
+		for _, r := range allRanks {
+			if r.MinTransactions > currentRank.MinTransactions {
+				nextRank = &r
+				break
+			}
+		}
+
+		rankInfoResult := RankInfoResult{
+			CurrentRank:      currentRank,
+			NextRank:         nextRank,
+			TransactionCount: currentRank.MinTransactions,
+			ExpireDate: nil,
+			DiscountPercent:  currentRank.PercentageDiscount,
+		}
+
+		if currentRank.ExpiredWeeks > 0 {
+			now := time.Now().In(time.FixedZone("Asia/Jakarta", 7*3600))
+			expire := now.AddDate(0, 0, currentRank.ExpiredWeeks*7)
+			rankInfoResult.ExpireDate = &expire
+		}
+
+
+		return &rankInfoResult, nil
+	}
+
+	// =========================
+	// Ambil Transaksi
+	// =========================
+	query := db.
+		Where("buyer_id = ?", buyerID).
+		Where("status = ?", "selesai").
+		Where("total_display_price >= ?", 5000000).
+		Where("created_at >= ?", time.Date(2025, 6, 1, 0, 0, 0, 0, loc))
+
+	if currentTransactionDate != nil {
+		query = query.Where("created_at <= ?", *currentTransactionDate)
+	}
+
+	var transactions []models.SaleDocument
+	if err := query.
+		Order("created_at asc").
+		Select("created_at").
+		Find(&transactions).Error; err != nil {
+		return nil, err
+	}
+
+	// =========================
+	// Buyer Baru
+	// =========================
+	if len(transactions) == 0 {
+		currentRank := allRanks[0]
+
+		var nextRank *models.LoyaltyRank
+		if len(allRanks) > 1 {
+			nextRank = &allRanks[1]
+		}
+
+		return &RankInfoResult{
+			CurrentRank:      &currentRank,
+			NextRank:         nextRank,
+			TransactionCount: 0,
+			ExpireDate:       nil,
+			DiscountPercent:  currentRank.PercentageDiscount,
+		}, nil
+	}
+
+	// =========================
+	// Simulasi
+	// =========================
+	currentTransactionCount := 0
+	var simulatedExpireDate *time.Time
+
+	storeClosureStart := time.Date(2025, 7, 11, 0, 0, 0, 0, loc)
+	storeClosureEnd := time.Date(2025, 9, 19, 23, 59, 59, 0, loc)
+
+	for _, trx := range transactions {
+		trxDate := trx.CreatedAt
+
+		// ===== EXPIRED =====
+		for currentTransactionCount >= 2 &&
+			simulatedExpireDate != nil &&
+			trxDate.After(*simulatedExpireDate) {
+
+			//jika rank expired date buyer berda diantara toko tutup
+			//maka tambahkan masa expired buyer
+			if simulatedExpireDate.After(storeClosureStart) &&
+				simulatedExpireDate.Before(storeClosureEnd) {
+
+				sisaHari := int(storeClosureStart.Sub(*simulatedExpireDate).Hours() / 24)
+				if sisaHari < 0 {
+					sisaHari = 0
+				}
+
+				extended := storeClosureEnd.AddDate(0, 0, 1+sisaHari)
+				simulatedExpireDate = &extended
+
+				/*jika transaction date tidak lebih besar dari tanggal expired rank
+				maka jngan downgrade rank */
+				if !trxDate.After(*simulatedExpireDate) {
+					break
+				}
+			}
+
+			// downgrade
+			var currentRank *models.LoyaltyRank
+			for i := len(allRanks) - 1; i >= 0; i-- {
+				if allRanks[i].MinTransactions <= currentTransactionCount {
+					currentRank = &allRanks[i]
+					break
+				}
+			}
+
+			var downgradedRank *models.LoyaltyRank
+			if currentRank != nil {
+				for i := len(allRanks) - 1; i >= 0; i-- {
+					if allRanks[i].MinTransactions < currentRank.MinTransactions {
+						downgradedRank = &allRanks[i]
+						break
+					}
+				}
+			}
+
+			if downgradedRank == nil {
+				downgradedRank = &allRanks[0]
+			}
+
+			if currentRank != nil && downgradedRank.ID == currentRank.ID {
+				currentTransactionCount = downgradedRank.MinTransactions
+				simulatedExpireDate = nil
+				break
+			}
+
+			currentTransactionCount = downgradedRank.MinTransactions
+
+			if downgradedRank.ExpiredWeeks > 0 && simulatedExpireDate != nil {
+				newExpire := simulatedExpireDate.AddDate(0, 0, downgradedRank.ExpiredWeeks*7)
+				simulatedExpireDate = &newExpire
+			} else {
+				simulatedExpireDate = nil
+			}
+		}
+
+		// ===== TRANSAKSI =====
+		currentTransactionCount++
+
+		if currentTransactionCount >= 2 {
+			effective := currentTransactionCount - 1
+
+			var activeRank *models.LoyaltyRank
+			for i := len(allRanks) - 1; i >= 0; i-- {
+				if allRanks[i].MinTransactions <= effective {
+					activeRank = &allRanks[i]
+					break
+				}
+			}
+
+			if activeRank != nil && activeRank.ExpiredWeeks > 0 {
+				exp := trxDate.AddDate(0, 0, activeRank.ExpiredWeeks*7)
+				simulatedExpireDate = &exp
+			} else {
+				simulatedExpireDate = nil
+			}
+		}
+	}
+
+	// =========================
+	// Rank Final
+	// =========================
+	var finalRank *models.LoyaltyRank
+	for i := len(allRanks) - 1; i >= 0; i-- {
+		if allRanks[i].MinTransactions <= currentTransactionCount {
+			finalRank = &allRanks[i]
+			break
+		}
+	}
+
+	if finalRank == nil {
+		finalRank = &allRanks[0]
+	}
+
+	var nextRank *models.LoyaltyRank
+	for _, r := range allRanks {
+		if r.MinTransactions > finalRank.MinTransactions {
+			nextRank = &r
+			break
+		}
+	}
+
+	return &RankInfoResult{
+		CurrentRank:      finalRank,
+		NextRank:         nextRank,
+		TransactionCount: currentTransactionCount,
+		ExpireDate:       simulatedExpireDate,
+		DiscountPercent:  finalRank.PercentageDiscount,
+	}, nil
+}
+
+
+
+

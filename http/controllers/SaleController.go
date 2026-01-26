@@ -6,6 +6,7 @@ import (
 	"math"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	// "fmt"
 	"liquid8/wms/config"
@@ -292,407 +293,772 @@ func SaleIndex(c *gin.Context) {
 	})
 }
 
-// func ShowSaleDocument(c *gin.Context) {
-// 	id := c.Param("id")
+func DetailSaleDocument(c *gin.Context) {
+	id := c.Param("id")
 
-// 	var sale models.SaleDocument
-// 	if err := config.DB.
-// 		Preload("Sales").
-// 		Preload("User").
-// 		Preload("Buyer.Rank").
-// 		First(&sale, id).Error; err != nil {
+	var sale models.SaleDocument
+	if err := config.DB.
+		Preload("Sales").
+		Preload("User").
+		Preload("Buyer").
+		First(&sale, id).Error; err != nil {
 
-// 		if errors.Is(err, gorm.ErrRecordNotFound) {
-// 			c.JSON(http.StatusNotFound, gin.H{
-// 				"success": false,
-// 				"message": "Sale document tidak ditemukan",
-// 			})
-// 		}else {
-// 			c.JSON(http.StatusNotFound, gin.H{
-// 				"success": false,
-// 				"message": "Gagal query sale document",
-// 				"error": err.Error(),
-// 			})
-// 		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"message": "Sale document tidak ditemukan",
+			})
+		}else {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"message": "Gagal query sale document",
+				"error": err.Error(),
+			})
+		}
 
-// 		return
-// 	}
+		return
+	}
 
-// 	createdAt := sale.CreatedAt
-// 	month := int(createdAt.Month())
-// 	year := createdAt.Year()
+	createdAt := sale.CreatedAt
+	month := int(createdAt.Month())
+	year := createdAt.Year()
 
-// 	// Monthly Point
-// 	var monthlyPoint int64
-// 	if err := config.DB.
-// 		Model(&models.SaleDocument{}).
-// 		Where("buyer_id = ?", sale.BuyerID).
-// 		Where("status = ?", "selesai").
-// 		Where("MONTH(created_at) = ?", month).
-// 		Where("YEAR(created_at) = ?", year).
-// 		Select("COALESCE(SUM(buyer_point_document_sale),0)").
-// 		Scan(&monthlyPoint).Error; err != nil {
+	// Monthly Point
+	var monthlyPoint int64
+	if err := config.DB.
+		Model(&models.SaleDocument{}).
+		Where("buyer_id = ?", sale.BuyerID).
+		Where("status = ?", "selesai").
+		Where("MONTH(created_at) = ?", month).
+		Where("YEAR(created_at) = ?", year).
+		Select("COALESCE(SUM(buyer_point),0)").
+		Scan(&monthlyPoint).Error; err != nil {
 
-// 		c.JSON(400, gin.H{
-// 			"success": false,
-// 			"message": "Gagal menghitung monthly point",
-// 			"error": err.Error(),
-// 		})
-// 	}
+		c.JSON(400, gin.H{
+			"success": false,
+			"message": "Gagal menghitung monthly point",
+			"error": err.Error(),
+		})
+	}
 
-// 	// Monthly Rank Position
-// 	var higherRankCount int64
-// 	if err := config.DB.
-// 		Model(&models.SaleDocument{}).
-// 		Select("buyer_id").
-// 		Where("status = ?", "selesai").
-// 		Where("MONTH(created_at) = ?", month).
-// 		Where("YEAR(created_at) = ?", year).
-// 		Group("buyer_id").
-// 		Having("SUM(buyer_point) > ?", monthlyPoint).
-// 		Count(&higherRankCount).Error; err != nil {
+	// Monthly Rank Position
+	var higherRankCount int64
+	if err := config.DB.
+		Model(&models.SaleDocument{}).
+		Select("buyer_id").
+		Where("status = ?", "selesai").
+		Where("MONTH(created_at) = ?", month).
+		Where("YEAR(created_at) = ?", year).
+		Group("buyer_id").
+		Having("SUM(buyer_point) > ?", monthlyPoint).
+		Count(&higherRankCount).Error; err != nil {
 
-// 		c.JSON(400, gin.H{
-// 			"success": false,
-// 			"message": "Gagal menghitung ranking buyer",
-// 			"error": err.Error(),
-// 		})
-// 	}
+		c.JSON(400, gin.H{
+			"success": false,
+			"message": "Gagal menghitung ranking buyer",
+			"error": err.Error(),
+		})
 
-// 	monthlyRank := higherRankCount + 1
+		return
+	}
 
-// 	// Loyalty Info saat transaksi
-// 	loyalty, err := helpers.GetRankAtTransaction(
-// 		sale.BuyerID,
-// 		sale.CreatedAt,
-// 	)
+	monthlyRank := higherRankCount + 1
 
-// 	// 4️⃣ Response
-// 	c.JSON(http.StatusOK, responses.Success("data document sale", gin.H{
-// 		"id":                 sale.ID,
-// 		"code_document_sale": sale.CodeDocumentSale,
-// 		"status":             sale.Status,
-// 		"created_at":         sale.CreatedAt,
-// 		"buyer": gin.H{
-// 			"id":                     sale.Buyer.ID,
-// 			"point_buyer":            sale.Buyer.PointBuyer,
-// 			"rank":                   loyalty.Rank,
-// 			"next_rank":              loyalty.NextRank,
-// 			"transaction_next":       loyalty.TransactionNext,
-// 			"percentage_discount":    loyalty.PercentageDiscount,
-// 			"current_transaction":    loyalty.TransactionCount,
-// 			"expire_date":            loyalty.ExpireDate,
-// 			"monthly_point":          monthlyPoint,
-// 			"monthly_rank_position":  monthlyRank,
-// 		},
-// 	}))
-// }
+	// Gunakan helper function untuk mendapatkan rank info SAMPAI transaksi ini
+    // Passing created_at untuk mendapatkan state pada saat transaksi ini terjadi
+	rankInfo, err := helpers.GetCurrentRankInfo(
+		config.DB, 
+		uint(sale.BuyerID),
+		sale.CreatedAt, 
+	)
 
-// func AddProductToSaleDocument(c *gin.Context) {
-// 	user := c.MustGet("auth_user").(models.User)
+	if err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil rank info", "error": err.Error()})
+		return
+	}
 
-// 	type payloadRequest struct {
-// 		SaleBarcode  string   `json:"sale_barcode" binding:"required"`
-// 		SaleDocumentID      uint64   `json:"sale_document_id" binding:"required,numeric"`
-// 		TypeDiscount *string  `json:"type_discount" binding:"omitempty,oneof=new old"`
-// 	}
+	//data transactionCount adalah data stelah transaksi ini
+	transactionCountAfter := rankInfo.TransactionCount
+	expiredDate := rankInfo.ExpireDate
+	transactionCountBefore := max(0, transactionCountAfter - 1)
 
-// 	var req payloadRequest
-// 	if err := c.ShouldBindJSON(&req); err != nil {
+	//cari rank sebelum transaksi ini
+	var rankAtTransaction models.LoyaltyRank
+	if err := config.DB.Where("min_transactions <= ?", transactionCountBefore).
+		Order("min_transactions DESC").First(&rankAtTransaction).Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil rank transaksi", "error": err.Error()})
+		return
+	}
 
-// 		ve, ok := err.(validator.ValidationErrors)
-// 		if !ok {
-// 			c.JSON(http.StatusBadRequest, gin.H{
-// 				"success": false,
-// 				"message": "Format JSON tidak valid",
-// 			})
-// 			return
-// 		}
+	var nextRankAtTransaction models.LoyaltyRank
+	if err := config.DB.Where("min_transactions > ?", transactionCountBefore).
+		Order("min_transactions ASC").First(&nextRankAtTransaction).Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil next rank", "error": err.Error()})
+		return
+	}
 
-// 		errorsMap := make(map[string]string)
+	var formattedExpireDate interface{}
+	if expiredDate != nil {
+		formattedExpireDate = expiredDate.Format("2006-01-02 15:04:05")
+	} else {
+		formattedExpireDate = nil // atau "" jika ingin string kosong
+	}
 
-// 		for _, e := range ve {
-// 			field := e.Field()
+	buyerData := map[string]interface{}{
+		"id":					sale.Buyer.ID,
+		"point_buyer": 			sale.Buyer.PointBuyer,
+		"rank":					rankAtTransaction.Rank,
+		"next_rank":			nextRankAtTransaction.Rank,
+		"transaction_next":		max(0, nextRankAtTransaction.MinTransactions - transactionCountAfter),
+		"percentage_discount":	rankAtTransaction.PercentageDiscount,
+		"current_transaction":	transactionCountAfter,
+		"expire_date":			formattedExpireDate,
+		"monthly_point":		monthlyPoint,
+		"monthly_rank_position": monthlyRank,
+	}
 
-// 			switch field {
-// 			case "SaleBarcode":
-// 				errorsMap["sale_barcode"] = "Barcode wajib diisi"
+	type saleItemResponse struct {
+		ID          uint64  `json:"id"`
+		Barcode		string	`json:"barcode"`
+		NameProduct string  `json:"name_product"`
+		Category	string	`json:"category"`
+		Qty         int64   `json:"qty"`
+		ProductPriceSale       float64 `json:"product_price_sale"`
+		Type        string  `json:"type"` // product | bundle (opsional tapi berguna)
+	}
 
-// 			case "SaleDocumentID":
-// 				errorsMap["sale_document_id"] = "Sale Document ID wajib diisi dan berupa numerik"
+	var productBarcodes []string
+	var bundleBarcodes []string
 
-// 			case "TypeDiscount":
-// 				errorsMap["type_discount"] = "Type discount harus bernilai 'new' atau 'old'"
+	for _, s := range sale.Sales {
+		if s.ItemType == "product" {
+			productBarcodes = append(productBarcodes, s.BarcodeItem)
+		} else {
+			bundleBarcodes = append(bundleBarcodes, s.BarcodeItem)
+		}
+	}
 
-// 			default:
-// 				errorsMap[strings.ToLower(field)] =
-// 					"Validasi gagal pada field " + field
-// 			}
-// 		}
+	// ambil semua product 
+	productMap := map[string]models.Product{}
+	if len(productBarcodes) > 0 {
+		var products []models.Product
+		config.DB.
+			Preload("Category").
+			Where("barcode IN ?", productBarcodes).
+			Find(&products)
 
-// 		c.JSON(http.StatusUnprocessableEntity, gin.H{
-// 			"success": false,
-// 			"message": "Validasi gagal",
-// 			"errors": errorsMap,
-// 		})
-// 		return
-// 	}
+		for _, p := range products {
+			productMap[p.Barcode] = p
+		}
+	}
 
-// 	defer func() {
-// 		if r := recover(); r != nil {
+	//ambil semmua bundle
+	bundleMap := map[string]models.Bundle{}
+	if len(bundleBarcodes) > 0 {
+		var bundles []models.Bundle
+		config.DB.
+			Preload("Category").
+			Where("barcode IN ?", bundleBarcodes).
+			Find(&bundles)
 
-// 			stack := debug.Stack() // ← full stack trace
+		for _, b := range bundles {
+			bundleMap[b.Barcode] = b
+		}
+	}
 
-// 			// log ke file / stdout
-// 			fmt.Printf("PANIC: %v\n%s\n", r, stack)
 
-// 			c.JSON(http.StatusInternalServerError, gin.H{
-// 				"success": false,
-// 				"message": "Terjadi kesalahan internal",
-// 				// JANGAN kirim stack ke client di production
-// 			})
-// 		}
-// 	}()
+	var sales []saleItemResponse
+	for _, s := range sale.Sales {
+		item := saleItemResponse{
+			ID:                s.ID,
+			Barcode:           s.BarcodeItem,
+			ProductPriceSale:  s.ProductPriceSale,
+			Type:              s.ItemType,
+		}
 
-// 	// db := config.DB
+		if s.ItemType == "product" {
+			if p, ok := productMap[s.BarcodeItem]; ok {
+				item.NameProduct = p.Name
+				item.Category = p.Category.NameCategory
+				item.Qty = p.Quantity
+			}
+		} else {
+			if b, ok := bundleMap[s.BarcodeItem]; ok {
+				item.NameProduct = b.NameBundle
+				item.Category = b.Category.NameCategory
+				item.Qty = b.TotalProduct
+			}
+		}
 
-// 	tx := config.DB.WithContext(c.Request.Context()).Begin()
-// 	if tx.Error != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{
-// 			"success": false,
-// 			"message": "Failed to start database transaction",
-// 		})
-// 		return
-// 	}
+		sales = append(sales, item)
+	}
 
-// 	/* ===========================
-// 	FIND PRODUCT OR BUNDLE
-// 	=========================== */
-// 	var (
-// 		product       models.Product
-// 		bundle        models.Bundle
-// 		isBundle      bool
-// 		barcodeItem   string
-// 		newPrice      float64
-// 		oldPrice      float64
-// 		discount      float64
-// 		totalAfterDiscount      float64
-// 		grandTotalPrice      float64
-// 		productAfterDiscount      float64
-// 	)
 
-// 	var sale_document models.SaleDocument
-// 	if err := tx.First(&sale_document, req.SaleDocumentID).Error; err != nil {
-// 		tx.Rollback()
-// 		c.JSON(404, gin.H{
-// 			"success": false,
-// 			"message": "Sale Document tidak ditemukan",
-// 		})
-// 		return
-// 	}
 
-// 	discount = *sale_document.NewDiscountSale
+	// 4️⃣ Response
+	c.JSON(http.StatusOK, gin.H{
+		"success":                 true,
+		"message": "Detail sale document",
+		"resource": gin.H{
+			"id":                sale.ID,
+			"user_id":           sale.UserID,
+			"code_document_sale": sale.CodeDocumentSale,
+			"buyer_id":      sale.BuyerID,
+			"buyer_name":    sale.BuyerName,
+			"buyer_phone":   sale.BuyerPhone,
+			"buyer_address": sale.BuyerAddress,
+			"buyer_point":   sale.BuyerPoint,
+			"new_discount_sale": sale.NewDiscountSale,
+			"type_discount":     sale.TypeDiscount,
+			"total_product":     sale.TotalProduct,
+			"total_old_price":   sale.TotalOldPrice,
+			"total_price":       sale.TotalPrice,
+			"total_display_price":     sale.TotalDisplayPrice,
+			"status": sale.Status,
+			"cardbox_qty":         sale.CardboxQty,
+			"cardbox_unit_price": sale.CardboxUnitPrice,
+			"cardbox_total_price": sale.CardboxTotalPrice,
+			"voucher": sale.Voucher,
+			"approved": sale.Approved,
+			"is_tax": sale.IsTax,
+			"tax":    sale.Tax,
+			"price_after_tax": sale.PriceAfterTax,
+			"grand_total_price":     sale.GrandTotalPrice,
+			"created_at": sale.CreatedAt,
+			"updated_at": sale.UpdatedAt,
+			"sales": sales,
+			"user":  sale.User,
+			"buyer": buyerData, // hasil DTO / enrichment buyer
+		},
+	})
+}
 
-// 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-// 		Preload("ProductOld").
-// 		Preload("Category").
-// 		Where("barcode = ?", req.SaleBarcode).
-// 		First(&product).Error
+func AddProductToSaleDocument(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
 
-// 	if err != nil {
-// 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-// 			Preload("Category").
-// 			Where("barcode = ?", req.SaleBarcode).
-// 			First(&bundle).Error; err != nil {
+	type payloadRequest struct {
+		SaleBarcode  string   `json:"sale_barcode" binding:"required"`
+		SaleDocumentID      uint64   `json:"sale_document_id" binding:"required,numeric"`
+	}
 
-// 			tx.Rollback()
-// 			c.JSON(404, gin.H{
-// 				"success": false,
-// 				"message": "Produk / bundle tidak ditemukan",
-// 			})
-// 			return
-// 		}
-// 		isBundle = true
-// 	}
+	var req payloadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 
-// 	if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
-// 		tx.Rollback()
-// 		c.JSON(400, gin.H{
-// 			"success": false,
-// 			"message": "Product / bundle sudah dimasukkan ke penjualan",
-// 		})
-// 		return
-// 	}
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
 
-// 	/* ===========================
-// 	PRICE SETUP
-// 	=========================== */
-// 	if isBundle {
-// 		oldPrice = bundle.TotalPrice
-// 		newPrice = bundle.TotalPriceCustom
-// 		barcodeItem = bundle.Barcode
-// 		productAfterDiscount = newPrice * (1 - (discount / 100.0))
-// 		totalAfterDiscount = productAfterDiscount + sale_document.TotalPrice
+		errorsMap := make(map[string]string)
 
-// 		discount_category := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
-// 		discount_category = math.Round(discount_category)
-// 		if discount_category > product.Category.MaxPriceCategory {
-// 			discount_category = product.Category.MaxPriceCategory
-// 		} 
+		for _, e := range ve {
+			field := e.Field()
 
-// 		expectedPrice := product.ProductOld.OldPriceProduct - discount_category
+			switch field {
+			case "SaleBarcode":
+				errorsMap["sale_barcode"] = "Barcode wajib diisi"
 
-// 		if bundle.TotalPriceCustom != expectedPrice {
-// 			tx.Rollback()
-// 			c.JSON(400, gin.H{
-// 				"success": false,
-// 				"message": "Harga bundle tidak sesuai",
-// 				"barcode": barcodeItem,
-// 				"price_now": bundle.TotalPriceCustom,
-// 				"expected_price": expectedPrice,
-// 			})
-// 			return
-// 		}
-// 	} else {
-// 		oldPrice = product.ProductOld.OldPriceProduct
-// 		newPrice = product.Price
-// 		barcodeItem = product.Barcode
-// 		productAfterDiscount = newPrice * (1 - (discount / 100.0))
-// 		totalAfterDiscount = productAfterDiscount + sale_document.TotalPrice
+			case "SaleDocumentID":
+				errorsMap["sale_document_id"] = "Sale Document ID wajib diisi dan berupa numerik"
 
-// 		discount_category := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
-// 		discount_category = math.Round(discount_category)
-// 		if discount_category > product.Category.MaxPriceCategory {
-// 			discount_category = product.Category.MaxPriceCategory
-// 		} 
-// 		expectedPrice := product.ProductOld.OldPriceProduct - discount_category
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
 
-// 		if product.Price != expectedPrice {
-// 			tx.Rollback()
-// 			c.JSON(400, gin.H{
-// 				"success": false,
-// 				"message": "Harga product tidak sesuai",
-// 				"barcode": barcodeItem,
-// 				"price_now": product.Price,
-// 				"expected_price": expectedPrice,
-// 				"discount": discount,
-// 			})
-// 			return
-// 		}
-// 	}
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
 
-// 	if sale_document.NewDiscountSale != nil && *sale_document.NewDiscountSale > 0 {
+	defer func() {
+		if r := recover(); r != nil {
 
-// 		if req.TypeDiscount != nil && *req.TypeDiscount == "old" {
-// 			productAfterDiscount = newPrice * (1 - (discount / 100.0))
-// 			totalAfterDiscount = productAfterDiscount + sale_document.TotalPrice
-// 			grandTotalPrice = totalAfterDiscount
-// 		}
-// 	}
+			stack := debug.Stack() // ← full stack trace
 
-// 	//tambah biaya karton box
-// 	grandTotalPrice += *sale_document.CardboxTotalPrice
+			// log ke file / stdout
+			fmt.Printf("PANIC: %v\n%s\n", r, stack)
 
-// 	//hitung pajak
-// 	tax := grandTotalPrice * (*sale_document.Tax / 100.0)
-// 	grandTotalPrice += tax
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "Terjadi kesalahan internal",
+				// JANGAN kirim stack ke client di production
+			})
+		}
+	}()
 
-// 	/* ===========================
-// 	TOTAL SALE CHECK
-// 	=========================== */
-// 	var totalPriceSale float64
-// 	if err := tx.Model(&models.Sale{}).
-// 		Select("COALESCE(SUM(base_price),0)").
-// 		Where("user_id = ? AND status_sale = 'proses'", user.ID).
-// 		Scan(&totalPriceSale).Error; err != nil {
+	// db := config.DB
 
-// 		tx.Rollback()
-// 		c.JSON(500, gin.H{"success": false, "message": err.Error()})
-// 		return
-// 	}
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Failed to start database transaction",
+		})
+		return
+	}
 
-// 	newTotal := totalPriceSale + basePrice
+	/* ===========================
+	FIND PRODUCT OR BUNDLE
+	=========================== */
+	var (
+		product       models.Product
+		bundle        models.Bundle
+		isBundle      bool
+		barcodeItem   string
+		newPrice      float64
+		oldPrice      float64
+		basePrice     float64
+		discount      float64
+		totalDiscount float64
+	)
 
-// 	if newTotal >= 5000000 {
-// 		var discountLoyalty float64
+	var saleDoc models.SaleDocument
+	if err := tx.Where("id = ?", req.SaleDocumentID).Where("user_id = ?", user.ID).First(&saleDoc).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"success": false, "message": "sale document tidak ditemukan"})
+		}else {
+			c.JSON(500, gin.H{"success": false, "message": "gagal mengambil data sale document", "error": err.Error()})
+		}
 
-// 		if buyer.TransactionCount == 0 {
-// 			discountLoyalty = 0
-// 		} else {
-// 			discountLoyalty = buyer.Rank.PercentageDiscount
-// 		}
+		return
+	}
 
-// 		if discountLoyalty > 0 {
-// 			if err := tx.Model(&models.Sale{}).
-// 				Where("sale_document_id = ?", saleDoc.ID).
-// 				Update(
-// 					"product_price_sale",
-// 					gorm.Expr("base_price * (1 - ? / 100)", discountLoyalty),
-// 				).Error; err != nil {
+	if saleDoc.Status != "selesai" {
+		c.JSON(400, gin.H{"success": false, "message": "sale document masih dalam proses"})
+		return
+	}
 
-// 				tx.Rollback()
-// 				c.JSON(500, gin.H{"success": false, "message": err.Error()})
-// 				return
-// 			}
+	itemType := "product"
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Preload("ProductOld").
+		Preload("Category").
+		Where("barcode = ?", req.SaleBarcode).
+		First(&product).Error
 
-// 			loyaltyDiscount := basePrice * (discountLoyalty / 100)
-// 			totalDiscount += loyaltyDiscount
-// 			productPriceSale = basePrice - loyaltyDiscount
-// 		}
-// 	}
+	if err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Category").
+			Where("barcode = ?", req.SaleBarcode).
+			First(&bundle).Error; err != nil {
 
-// 	/* ===========================
-// 	INSERT SALE
-// 	=========================== */
-// 	sale := models.Sale{
-// 		UserID:            uint64(user.ID),
-// 		SaleDocumentID:    saleDoc.ID,
-// 		BarcodeItem:       barcodeItem,
-// 		ProductPriceSale:  math.Ceil(productPriceSale),
-// 		BasePrice:         math.Ceil(basePrice),
-// 		TotalDiscountSale: math.Ceil(totalDiscount),
-// 		DiscountSale:      discount,
-// 		TypeDiscount:      req.TypeDiscount,
-// 		StatusSale:        "proses",
-// 	}
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"success": false,
+				"message": "Produk / bundle tidak ditemukan",
+			})
+			return
+		}
+		itemType = "bundle"
+		isBundle = true
+	}
 
-// 	if err := tx.Create(&sale).Error; err != nil {
-// 		tx.Rollback()
-// 		c.JSON(500, gin.H{"success": false, "message": "Gagal insert sale"})
-// 		return
-// 	}
+	if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
+		tx.Rollback()
+		c.JSON(400, gin.H{
+			"success": false,
+			"message": "Product / bundle sudah dimasukkan ke penjualan",
+		})
+		return
+	}
 
-// 	/* ===========================
-// 	UPDATE STATUS
-// 	=========================== */
-// 	if !isBundle {
-// 		if err := tx.Model(&product).Update("status", "sale").Error; err != nil {
-// 			tx.Rollback()
-// 			c.JSON(500, gin.H{"success": false, "message": err.Error()})
-// 			return
-// 		}
-// 	} else {
-// 		if err := tx.Model(&bundle).Update("status", "sale").Error; err != nil {
-// 			tx.Rollback()
-// 			c.JSON(500, gin.H{"success": false, "message": err.Error()})
-// 			return
-// 		}
-// 	}
+	/* ===========================
+	BUYER
+	=========================== */
+	var buyer models.Buyer
+	if err := tx.Preload("Rank").First(&buyer, saleDoc.BuyerID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(404, gin.H{
+			"success": false,
+			"message": "Buyer tidak ditemukan",
+		})
+		return
+	}
 
-// 	/* ===========================
-// 	COMMIT
-// 	=========================== */
-// 	if err := tx.Commit().Error; err != nil {
-// 		c.JSON(500, gin.H{"success": false, "message": "Gagal commit transaksi"})
-// 		return
-// 	}
+	/* ===========================
+	PRICE SETUP / DEFAULT VALUE
+	=========================== */
+	if isBundle {
+		oldPrice = bundle.TotalPrice
+		basePrice = bundle.TotalPriceCustom
+		newPrice = basePrice
+		barcodeItem = bundle.Barcode
+		totalDiscount = 0.0
 
-// 	c.JSON(200, gin.H{
-// 		"success": true,
-// 		"message": "Item berhasil ditambahkan ke penjualan",
-// 	})
+		category_discount := bundle.TotalPrice * (float64(bundle.Category.DiscountCategory)/100.0)
+		category_discount = math.Round(category_discount)
+		if category_discount > bundle.Category.MaxPriceCategory {
+			category_discount = bundle.Category.MaxPriceCategory
+		} 
 
-// }
+		expectedPrice := bundle.TotalPrice - category_discount
+
+		if bundle.TotalPriceCustom != expectedPrice {
+			tx.Rollback()
+			c.JSON(400, gin.H{
+				"success": false,
+				"message": "Harga bundle tidak sesuai",
+				"barcode": barcodeItem,
+				"price_now": bundle.TotalPriceCustom,
+				"expected_price": expectedPrice,
+			})
+			return
+		}
+	} else {
+		oldPrice = product.ProductOld.OldPriceProduct
+		basePrice = product.DisplayPrice
+		newPrice = product.Price
+		barcodeItem = product.Barcode
+		totalDiscount = product.Price - product.DisplayPrice
+
+		if product.Discount != nil {
+			discount = *product.Discount
+		}
+
+		category_discount := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
+		category_discount = math.Round(category_discount)
+		if category_discount > product.Category.MaxPriceCategory {
+			category_discount = product.Category.MaxPriceCategory
+		} 
+		expectedPrice := product.ProductOld.OldPriceProduct - category_discount
+
+		if product.Price != expectedPrice {
+			tx.Rollback()
+			c.JSON(400, gin.H{
+				"success": false,
+				"message": "Harga product tidak sesuai",
+				"barcode": barcodeItem,
+				"price_now": product.Price,
+				"expected_price": expectedPrice,
+				"discount": discount,
+			})
+			return
+		}
+	}
+
+	productPriceSale := basePrice
+
+	if *saleDoc.NewDiscountSale > 0 {
+		discount = *saleDoc.NewDiscountSale
+
+		if saleDoc.TypeDiscount != nil && *saleDoc.TypeDiscount == "new" {
+			totalDiscount = newPrice * discount / 100
+			productPriceSale = newPrice - totalDiscount
+		} else {
+			totalDiscount = oldPrice * discount / 100
+			productPriceSale = oldPrice - totalDiscount
+		}
+
+		basePrice = productPriceSale
+	}
+
+	newTotalDisplayPrice := saleDoc.TotalDisplayPrice + basePrice
+
+	if saleDoc.TotalDisplayPrice >= 5000000 {
+		var rankBefore models.LoyaltyRank
+		// abaikan discount loyalty jika buyer rank sebelumnya new buyer
+		// transaction count = 2, artinya buyer baru naik rank bronze saat ini, sebelumnya new buyer 
+		if  buyer.Rank != nil && buyer.Rank.Rank != "New Buyer" && buyer.TransactionCount > 2 {
+			transaction_count_before := buyer.TransactionCount - 1
+
+			if err := tx.
+				Where("min_transactions <= ?", transaction_count_before).
+				Order("min_transactions DESC").
+				Limit(1).
+				First(&rankBefore).Error; err != nil {
+				c.JSON(400, gin.H{"success": false, "message": "Gagal mengambil rank buyer", "error": err.Error()})
+
+				return
+			}
+
+			discountLoyalty := rankBefore.PercentageDiscount
+			if discountLoyalty > 0 {
+				loyaltyDiscount := basePrice * (discountLoyalty / 100)
+				totalDiscount += loyaltyDiscount
+				productPriceSale = basePrice - loyaltyDiscount
+			}
+		}
+
+	}else {
+		// jika total price Baru tembus 5jt setelah produk ini ditambahkan
+		if newTotalDisplayPrice >= 5000000 {
+			var discountLoyalty float64
+	
+			if buyer.TransactionCount == 0 {
+				discountLoyalty = 0
+			} else {
+				discountLoyalty = buyer.Rank.PercentageDiscount
+			}
+	
+			if discountLoyalty > 0 {
+				if err := tx.Model(&models.Sale{}).
+					Where("sale_document_id = ?", saleDoc.ID).
+					Update(
+						"product_price_sale",
+						gorm.Expr("base_price * (1 - ? / 100)", discountLoyalty),
+					).Error; err != nil {
+	
+					tx.Rollback()
+					c.JSON(500, gin.H{"success": false, "message": err.Error()})
+					return
+				}
+	
+				loyaltyDiscount := basePrice * (discountLoyalty / 100)
+				totalDiscount += loyaltyDiscount
+				productPriceSale = basePrice - loyaltyDiscount
+			}
+		}
+	}
+
+	/* ===========================
+	INSERT SALE
+	=========================== */
+	sale := models.Sale{
+		UserID:            uint64(user.ID),
+		SaleDocumentID:    saleDoc.ID,
+		BarcodeItem:       barcodeItem,
+		ProductPriceSale:  math.Ceil(productPriceSale),
+		BasePrice:         math.Ceil(basePrice),
+		TotalDiscountSale: math.Ceil(totalDiscount),
+		DiscountSale:      discount,
+		TypeDiscount:      saleDoc.TypeDiscount,
+		StatusSale:        "selesai",
+		ItemType: 			itemType,		
+	}
+
+	if err := tx.Create(&sale).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "Gagal insert sale", "error": err.Error()})
+		return
+	}
+
+	/* ===========================
+	UPDATE STATUS
+	=========================== */
+	if !isBundle {
+		if err := tx.Model(&product).Update("status", "sale").Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	} else {
+		if err := tx.Model(&bundle).Update("status", "sale").Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	}
+
+	newTotalPrice := saleDoc.TotalPrice + productPriceSale
+	priceAfterTax := float64(0)
+
+	//tamabah biaya karton box
+	grandTotal := newTotalPrice + saleDoc.CardboxTotalPrice
+
+	//Hitung Pajak jika pakek tax
+	if saleDoc.IsTax == true && saleDoc.Tax != nil {
+		tax := grandTotal * (*saleDoc.Tax / 100.0)
+		priceAfterTax = grandTotal + tax
+	}
+
+	earnPoint := int64(math.Floor(newTotalPrice / 1000))
+
+	// ===========================
+	// Loyalty rank
+	// ===========================
+	if saleDoc.TotalPrice < 5000000 && newTotalDisplayPrice >= 5000000 {		
+		if err := helpers.ProcessLoyalty(tx, &buyer, newTotalDisplayPrice); err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"success": false, "message": "Gagal Proses Loyalty buyer", "error": err.Error()})
+			return
+		}
+	}
+	// ===========================
+	// Update Data Buyer
+	// ===========================
+	type BuyerStats struct {
+		AvgPurchase    float64
+		TotalTransaksi int64
+	}
+
+	var stats BuyerStats
+	if err := tx.Model(&models.SaleDocument{}).
+		Select(`
+			COALESCE(AVG(total_price), 0) AS avg_purchase,
+			COUNT(*) AS total_transaksi
+		`).
+		Where("buyer_id = ?", buyer.ID).
+		Where("status = ?", "selesai").
+		Scan(&stats).Error; err != nil {
+
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	typeBuyer := "Biasa"
+	if stats.TotalTransaksi == 2 || stats.TotalTransaksi == 3 {
+		typeBuyer = "Repeat"
+	} else if stats.TotalTransaksi > 3 {
+		typeBuyer = "Reguler"
+	}
+
+	if err := tx.Model(&buyer).Updates(map[string]interface{}{
+		"type_buyer":               typeBuyer,
+		"amount_purchase_buyer":    gorm.Expr("amount_purchase_buyer + ?", newTotalPrice),
+		"avg_purchase_buyer":       stats.AvgPurchase,
+		"point_buyer":              gorm.Expr("point_buyer = ?", earnPoint),
+	}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "gagal update data buyer", "error": err.Error()})
+		return
+	}
+
+	// ===========================
+	// UPDATE SALE DOCUMEN
+	// ===========================
+	errSaleDoc := tx.Model(&saleDoc).Updates(map[string]interface{}{
+		"buyer_point":     			earnPoint,
+		"total_product":   			gorm.Expr("total_product + 1"),
+		"total_old_price": 			gorm.Expr("total_old_price + ?", oldPrice),
+		"total_price":     			newTotalPrice,
+		"total_display_price":   	newTotalDisplayPrice,
+		"grand_total_price":   		grandTotal,
+		"price_after_tax":          math.Ceil(priceAfterTax),
+	}).Error
+
+	if errSaleDoc != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"success": false, "message": "Gagal update sale document", "error": errSaleDoc.Error()})
+		return
+	}
+
+	/* ===========================
+	COMMIT
+	=========================== */
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Gagal commit transaksi"})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"success": true,
+		"message": "Item berhasil ditambahkan ke penjualan",
+	})
+
+}
+
+func UpdateSaleDocument(c *gin.Context) {
+	var saleDocument models.SaleDocument
+	user := c.MustGet("auth_user").(models.User)
+
+	// Ambil ID dari param
+	id := c.Param("sale_doc_id")
+
+	// Cari SaleDocument
+	if err := config.DB.Where("id = ?", id).Where("user_id = ?", user.ID).First(&saleDocument).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"success": false, "message": "sale document tidak ditemukan"})
+		}else {
+			c.JSON(500, gin.H{"success": false, "message": "gagal mengambil data sale document", "error": err.Error()})
+		}
+
+		return
+	}
+
+	if saleDocument.Status != "selesai" {
+		c.JSON(400, gin.H{"success": false, "message": "sale document masih dalam proses"})
+	}
+
+	// =========================
+	// Request Validation
+	// =========================
+	type Request struct {
+		CardboxQty       int `json:"cardbox_qty" binding:"required,numeric"`
+		CardboxUnitPrice float64 `json:"cardbox_unit_price" binding:"required,numeric"`
+	}
+
+	var req Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Input tidak valid!",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	// =========================
+	// Cek perubahan data
+	// =========================
+	if req.CardboxQty == saleDocument.CardboxQty &&
+		req.CardboxUnitPrice == saleDocument.CardboxUnitPrice {
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  false,
+			"message": "Data tidak ada yang berubah!",
+			"data":    saleDocument,
+		})
+		return
+	}
+
+	// =========================
+	// Hitung Cardbox
+	// =========================
+	newCardboxTotal := float64(req.CardboxQty) * req.CardboxUnitPrice
+
+	// Grand total
+	grandTotal := saleDocument.TotalPrice + newCardboxTotal
+
+	// Price after tax
+	priceAfterTax := grandTotal
+
+	if saleDocument.IsTax == false && saleDocument.Tax != nil && *saleDocument.Tax > 0 {
+		taxAmount := grandTotal * (*saleDocument.Tax / 100)
+		priceAfterTax = grandTotal + taxAmount
+	}
+
+	// =========================
+	// Update database
+	// =========================
+	err := config.DB.Model(&saleDocument).Updates(map[string]interface{}{
+		"cardbox_qty":         req.CardboxQty,
+		"cardbox_unit_price": req.CardboxUnitPrice,
+		"cardbox_total_price": newCardboxTotal,
+		"grand_total_price":    grandTotal,
+		"price_after_tax":    priceAfterTax,
+	}).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "Gagal menyimpan data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Reload relasi
+	config.DB.Preload("Sales").Preload("User").First(&saleDocument, saleDocument.ID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Data berhasil disimpan!",
+		"data":    saleDocument,
+	})
+}
 
 func StoreProductToSale(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
@@ -790,6 +1156,7 @@ func StoreProductToSale(c *gin.Context) {
 		totalDiscount float64
 	)
 
+	itemType := "product"
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Preload("ProductOld").
 		Preload("Category").
@@ -810,6 +1177,7 @@ func StoreProductToSale(c *gin.Context) {
 			return
 		}
 		isBundle = true
+		itemType = "bundle"
 	}
 
 	if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
@@ -869,7 +1237,7 @@ func StoreProductToSale(c *gin.Context) {
 	}
 
 	/* ===========================
-	PRICE SETUP
+	PRICE SETUP / DEFAULT VALUE
 	=========================== */
 	if isBundle {
 		oldPrice = bundle.TotalPrice
@@ -878,13 +1246,13 @@ func StoreProductToSale(c *gin.Context) {
 		barcodeItem = bundle.Barcode
 		totalDiscount = 0.0
 
-		discount := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
-		discount = math.Round(discount)
-		if discount > product.Category.MaxPriceCategory {
-			discount = product.Category.MaxPriceCategory
+		category_discount := bundle.TotalPrice * (float64(bundle.Category.DiscountCategory)/100.0)
+		category_discount = math.Round(category_discount)
+		if category_discount > bundle.Category.MaxPriceCategory {
+			category_discount = bundle.Category.MaxPriceCategory
 		} 
 
-		expectedPrice := product.ProductOld.OldPriceProduct - discount
+		expectedPrice := bundle.TotalPrice - category_discount
 
 		if bundle.TotalPriceCustom != expectedPrice {
 			tx.Rollback()
@@ -908,12 +1276,12 @@ func StoreProductToSale(c *gin.Context) {
 			discount = *product.Discount
 		}
 
-		discount := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
-		discount = math.Round(discount)
-		if discount > product.Category.MaxPriceCategory {
-			discount = product.Category.MaxPriceCategory
+		category_discount := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
+		category_discount = math.Round(category_discount)
+		if category_discount > product.Category.MaxPriceCategory {
+			category_discount = product.Category.MaxPriceCategory
 		} 
-		expectedPrice := product.ProductOld.OldPriceProduct - discount
+		expectedPrice := product.ProductOld.OldPriceProduct - category_discount
 
 		if product.Price != expectedPrice {
 			tx.Rollback()
@@ -962,11 +1330,10 @@ func StoreProductToSale(c *gin.Context) {
 	newTotal := totalPriceSale + basePrice
 
 	if newTotal >= 5000000 {
-		var discountLoyalty float64
+		discountLoyalty := float64(0)
+		now := time.Now().In(time.FixedZone("Asia/Jakarta", 7*3600))
 
-		if buyer.TransactionCount == 0 {
-			discountLoyalty = 0
-		} else {
+		if buyer.LoyaltyRankID != nil && buyer.ExpireDate != nil && buyer.ExpireDate.After(now) {
 			discountLoyalty = buyer.Rank.PercentageDiscount
 		}
 
@@ -1002,6 +1369,7 @@ func StoreProductToSale(c *gin.Context) {
 		DiscountSale:      discount,
 		TypeDiscount:      req.TypeDiscount,
 		StatusSale:        "proses",
+		ItemType: 			itemType,		
 	}
 
 	if err := tx.Create(&sale).Error; err != nil {
@@ -1436,7 +1804,7 @@ func SaleFinish(c *gin.Context) {
 	// ===========================
 	// TOTAL HITUNGAN
 	// ===========================
-	var totalDisplay, totalPrice, totalOld float64
+	var totalDisplay, totalPrice, totalOldProduct, totalOldBundle float64
 
 	tx.Model(&models.Sale{}).
 		Where("sale_document_id = ?", saleDocument.ID).
@@ -1447,11 +1815,17 @@ func SaleFinish(c *gin.Context) {
 		Select("COALESCE(SUM(product_price_sale),0)").Scan(&totalPrice)
 
 	tx.Model(&models.Sale{}).
-		Joins("JOIN products ON products.id = sales.product_id").
+		Joins("JOIN products ON products.barcode = sales.barcode_item").
 		Joins("JOIN product_olds ON product_olds.product_id = products.id").
 		Where("sales.sale_document_id = ?", saleDocument.ID).
 		Select("COALESCE(SUM(product_olds.old_price_product), 0)").
-		Scan(&totalOld)
+		Scan(&totalOldProduct)
+
+	tx.Model(&models.Sale{}).
+		Joins("JOIN bundles ON bundles.barcode = sales.barcode_item").
+		Where("sales.sale_document_id = ?", saleDocument.ID).
+		Select("COALESCE(SUM(bundles.total_price), 0)").
+		Scan(&totalOldBundle)
 
 	if req.Voucher != nil {
 		totalPrice -= *req.Voucher
@@ -1482,7 +1856,7 @@ func SaleFinish(c *gin.Context) {
 			return
 		}
 		taxPercent = *req.Tax
-		priceAfterTax += grandTotal * (taxPercent / 100)
+		priceAfterTax += grandTotal * (taxPercent / 100.0)
 	}
 
 	// ===========================
@@ -1562,9 +1936,9 @@ func SaleFinish(c *gin.Context) {
 	errSaleDoc := tx.Model(&saleDocument).Updates(map[string]interface{}{
 		"buyer_point":     			earnPoint,
 		"total_product":   			len(sales),
-		"total_old_price": 			totalOld,
+		"total_old_price": 			totalOldProduct + totalOldBundle,
 		"total_price":     			totalPrice,
-		"total_display":   			totalDisplay,
+		"total_display_price":   			totalDisplay,
 		"status":          			"selesai",
 		"cardbox_qty":                   req.CardboxQty,
 		"cardbox_unit_price":            req.CardboxUnitPrice,
@@ -1573,6 +1947,7 @@ func SaleFinish(c *gin.Context) {
 		"approved":                      approved,
 		"is_tax":                        req.IsTax,
 		"tax":                           taxPercent,
+		"grand_total_price":               grandTotal,
 		"price_after_tax":               math.Ceil(priceAfterTax),
 	}).Error
 

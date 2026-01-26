@@ -7,6 +7,7 @@ type Sale struct {
 	UserID                   uint64     `gorm:"column:user_id;not null;index" json:"user_id"`
 
 	SaleDocumentID         uint64      `gorm:"not null;index" json:"sale_document_id"`
+	ItemType         		string      `gorm:"not null;type:enum('product', 'bundle')" json:"item_type"` // type item sale
 	BarcodeItem         		string      `gorm:"not null;index" json:"barcode_item"` // merujuk kepada data product / bundle
 
 	GaborSale                		*float64    `gorm:"column:gabor_sale;type:decimal(15,2)" json:"gabor_sale"`

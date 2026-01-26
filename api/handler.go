@@ -158,13 +158,14 @@ func RouteHandler(r *gin.Engine) {
 		/* ==================== OUTBOUND ==================== */
 		//sale
 		protected.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
-		// protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocuments) //SaleController.go
+		protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocument) //SaleController.go
 		protected.GET("sales", controllers.SaleIndex) //SaleController.go
 		protected.GET("sale/buyers", controllers.GetBuyers) //BuyerController.go
 		protected.GET("sale/products", controllers.GetProductsForSale) //ProductController.go
-		// protected.POST("sale-document/add-products", controllers.AddProductToSaleDocument) //SaleController.go
+		protected.POST("sale-documents/add-product", controllers.AddProductToSaleDocument) //SaleController.go
 		protected.POST("sale/products/add", controllers.StoreProductToSale) //SaleController.go
 		protected.POST("sales/finish", controllers.SaleFinish) //SaleController.go
+		protected.PUT("sale-documents/:sale_doc_id", controllers.UpdateSaleDocument) //SaleController.go
 		protected.PUT("sales/:sale_id/update-price", controllers.UpdatePriceSale) //SaleController.go
 		protected.DELETE("sales/:sale_id", controllers.DestroySale) //SaleController.go
 		protected.GET("ppn", controllers.GetPPN) //PPNController.go
