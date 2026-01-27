@@ -27,7 +27,7 @@ type Sale struct {
 
 	//relation
 	User *User `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
-	// Product *Product `gorm:"foreignKey:BarcodeItem;references:Barcode" json:"product,omitempty"`
-	// Bundle *Bundle `gorm:"foreignKey:BarcodeItem;references:Barcode" json:"bundle,omitempty"`
+	Product *Product `gorm:"foreignKey:BarcodeItem;references:Barcode" json:"product,omitempty"`
+	Bundle *Bundle `gorm:"foreignKey:BarcodeItem;references:Barcode" json:"bundle,omitempty"`
 	SaleDocument *SaleDocument `gorm:"foreignKey:SaleDocumentID;references:ID" json:"sale_document,omitempty"`
 }

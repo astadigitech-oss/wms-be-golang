@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	// "github.com/go-playground/validator/v10"
@@ -1982,5 +1985,182 @@ func SaleFinish(c *gin.Context) {
 	})
 }
 
+func ExportInvoiceSale(c *gin.Context) {
+	sale_doc_id := c.Param("sale_doc_id")
+
+	var saleDoc models.SaleDocument
+	if err := config.DB.Preload("User").
+		Preload("Sales.Product.Category").
+		Preload("Sales.Bundle.Category").
+		First(&saleDoc, sale_doc_id).Error; err != nil {
+		
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"success": false, "message": "Sale document tidak ditemukan"})
+		}else {
+			c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil data sale document", "error": err.Error()})
+		}
+
+		return
+	}
+
+	f := excelize.NewFile()
+	sheet := "Invoice"
+	f.SetSheetName("Sheet1", sheet)
+
+	// HEADER SALE DOCUMENT
+	// =========================
+	headers := []string{
+		"Username Cashier",
+		"Kode Dokumen",
+		"ID Pembeli",
+		"Nama Pembeli",
+		"Telepon Pembeli",
+		"Alamat Pembeli",
+		"Diskon Baru",
+		"Total Produk",
+		"Total Harga",
+		"Harga Normal",
+		"Status Penjualan",
+		"Qty Kardus",
+		"Harga Kardus",
+		"Total Harga Kardus",
+		"Tanggal Dibuat",
+		"Voucher",
+		"Pajak",
+		"Harga Setelah Pajak",
+	}
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	// DATA SALE DOCUMENT
+	// =========================
+	row := 2
+	values := []interface{}{
+		saleDoc.User.Username,
+		saleDoc.CodeDocumentSale,
+		saleDoc.BuyerID,
+		saleDoc.BuyerName,
+		saleDoc.BuyerPhone,
+		saleDoc.BuyerAddress,
+		saleDoc.NewDiscountSale,
+		saleDoc.TotalProduct,
+		saleDoc.TotalPrice,
+		saleDoc.TotalDisplayPrice,
+		saleDoc.Status,
+		saleDoc.CardboxQty,
+		saleDoc.CardboxUnitPrice,
+		saleDoc.CardboxTotalPrice,
+		saleDoc.CreatedAt.Format("2006-01-02 15:04:05"),
+		saleDoc.Voucher,
+		saleDoc.Tax,
+		saleDoc.PriceAfterTax,
+	}
+
+	for i, v := range values {
+		cell, _ := excelize.CoordinatesToCellName(i+1, row)
+		f.SetCellValue(sheet, cell, v)
+	}
+
+	// =========================
+	// HEADER SALES
+	// =========================
+	row += 2
+	salesHeaders := []string{
+		"Nama Produk",
+		"Kategori Produk",
+		"Barcode Produk",
+		"Harga Produk",
+		"Kuantitas Produk",
+		"Status Penjualan",
+		"Total Diskon",
+		"Tanggal Dibuat",
+		"Harga Normal",
+	}
+
+	for i, h := range salesHeaders {
+		cell, _ := excelize.CoordinatesToCellName(i+1, row)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	row++
+	for _, s := range saleDoc.Sales {
+		var (
+			name     string
+			category string
+			barcode  string
+			qty      interface{}
+		)
+
+		// ITEM PRODUCT
+		if s.ItemType == "product" && s.Product != nil {
+			name = s.Product.Name
+			category = s.Product.Category.NameCategory
+			barcode = s.Product.Barcode
+			qty = s.Product.Quantity
+
+		// ITEM BUNDLE
+		} else if s.ItemType == "bundle" && s.Bundle != nil {
+			name = s.Bundle.NameBundle
+			category = s.Bundle.Category.NameCategory
+			barcode = s.Bundle.Barcode
+			qty = s.Bundle.TotalProduct
+
+		// SAFETY FALLBACK
+		} else {
+			continue // data rusak → skip
+		}
+
+		createdAt := ""
+		if s.CreatedAt != nil {
+			createdAt = s.CreatedAt.Format("2006-01-02 15:04:05")
+		}
+
+		data := []interface{}{
+			name,
+			category,
+			barcode,
+			s.ProductPriceSale,
+			qty,
+			s.StatusSale,
+			s.TotalDiscountSale,
+			createdAt,
+			s.BasePrice,
+		}
+
+		for i, v := range data {
+			cell, _ := excelize.CoordinatesToCellName(i+1, row)
+			f.SetCellValue(sheet, cell, v)
+		}
+		row++
+	}
+
+	// SAVE FILE
+	// =========================
+	fileName := fmt.Sprintf("invoice-sale-%s.xlsx", saleDoc.CodeDocumentSale)
+	exportPath := "public/exports"
+
+	if err := os.MkdirAll(exportPath, 0777); err != nil {
+		c.JSON(500, gin.H{"message": "Gagal membuat folder export path", "error": err.Error()})
+		return
+	}
+
+	filePath := filepath.Join(exportPath, fileName)
+	if err := f.SaveAs(filePath); err != nil {
+		c.JSON(500, gin.H{"message": "Gagal menyimpan file", "error": err.Error()})
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(200, gin.H{
+		"success": true,
+		"message": "unduh",
+		"data":    downloadURL,
+	})
+
+}
 
 

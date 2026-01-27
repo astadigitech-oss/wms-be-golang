@@ -159,6 +159,7 @@ func RouteHandler(r *gin.Engine) {
 		//sale
 		protected.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
 		protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocument) //SaleController.go
+		protected.GET("sale-documents/invoice-sale/:sale_doc_id", controllers.ExportInvoiceSale) //SaleController.go
 		protected.GET("sales", controllers.SaleIndex) //SaleController.go
 		protected.GET("sale/buyers", controllers.GetBuyers) //BuyerController.go
 		protected.GET("sale/products", controllers.GetProductsForSale) //ProductController.go

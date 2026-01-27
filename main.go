@@ -26,6 +26,11 @@ func main() {
 		log.Println("--- DEVELOPMENT MODE ---")
 	}
 
+	// ============================
+	// STATIC FILE CONFIG
+	// ============================
+	server.Static("/public", "./public")
+
 	// Middleware CORS
 	server.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*") // frontend origin
