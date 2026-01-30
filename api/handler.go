@@ -161,7 +161,6 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocument) //SaleController.go
 		protected.GET("sale-documents/invoice-sale/:sale_doc_id", controllers.ExportInvoiceSale) //SaleController.go
 		protected.GET("sales", controllers.SaleIndex) //SaleController.go
-		protected.GET("sale/buyers", controllers.GetBuyers) //BuyerController.go
 		protected.GET("sale/products", controllers.GetProductsForSale) //ProductController.go
 		protected.POST("sale-documents/add-product", controllers.AddProductToSaleDocument) //SaleController.go
 		protected.POST("sale/products/add", controllers.StoreProductToSale) //SaleController.go
@@ -174,8 +173,21 @@ func RouteHandler(r *gin.Engine) {
 		protected.PUT("ppn/:ppn_id", controllers.UpdatePPN) //PPNController.go
 		protected.DELETE("ppn/:ppn_id", controllers.DeletePPN) //PPNController.go
 		//B2B
-		// protected.GET("bulky-documents", controllers.GetBulkyDocuments) //DocumentController.go
+		protected.GET("bulky-documents", controllers.GetBulkyDocuments) //BulkyController.go
+		protected.GET("bulky-documents/:doc_id/bags", controllers.BagByUser) //BulkyController.go
+		protected.GET("bulky-documents/bags/:bag_id", controllers.ShowBagProductDetail) //BulkyController.go
+		protected.GET("bulky-documents/:doc_id/detail", controllers.DetailBulkyDocument) //BulkyController.go
+		protected.POST("bulky-documents", controllers.CreateBulkyDocument) //BulkyController.go
+		protected.POST("bulky-documents/:doc_id/bags", controllers.StoreBagBulkyDocument) //BulkyController.go
+		protected.POST("bulky-documents/:doc_id/export", controllers.ExportBulkyDocument) //BulkyController.go
+		protected.POST("bulky-sales/product", controllers.StoreBulkySale) //BulkyController.go
+		protected.POST("bulky-sales/product/import", controllers.ImportFileBulkySale) //BulkyController.go
+		protected.PUT("bulky-documents/:bulky_doc_id", controllers.UpdateBulkyDocument) //BulkyController.go
+		protected.PUT("bulky-documents/:bulky_doc_id/finish", controllers.BulkyDocumentFinish) //BulkyController.go
+		protected.DELETE("bulky-documents/bags/:bag_id", controllers.DestroyBagBulkyDocument) //BulkyController.go
+		protected.DELETE("bulky-sales/product/:bulky_sale_id", controllers.DeleteBulkySale) //BulkyController.go
 		//Buyer
+		protected.GET("buyers", controllers.GetBuyers) //BuyerController.go
 		protected.GET("monthly-buyer", controllers.GetBuyerMonthlyPoints) //BuyerController.go
 		protected.GET("summary-buyer", controllers.GetBuyerSummary) //BuyerController.go
 		//QCD

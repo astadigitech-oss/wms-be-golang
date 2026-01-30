@@ -71,6 +71,9 @@ var Tables = []interface{}{
 	&models.Ppn{},
 	&models.ScrapDocument{},
 	&models.ScrapItem{},
+	&models.BulkyDocument{},
+	&models.BagProduct{},
+	&models.BulkySale{},
 }
 
 

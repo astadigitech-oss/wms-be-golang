@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 
@@ -392,6 +393,43 @@ func GenerateBarcodeBundleRepair(db *gorm.DB) (string, error) {
 	// --- jika gagal setelah banyak percobaan ---
 	return "", errors.New("failed to generate unique barcode after max retries")
 }
+
+func GenerateBulkyCode(tx *gorm.DB) (string, error) {
+	now := time.Now()
+	month := now.Format("01") // 01 - 12
+	year := now.Format("2006")
+
+	var lastDoc models.BulkyDocument
+
+	err := tx.
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("MONTH(created_at) = ?", now.Month()).
+		Where("YEAR(created_at) = ?", now.Year()).
+		Order("id DESC").
+		First(&lastDoc).Error
+
+	sequence := 1
+
+	if err == nil {
+		// Contoh: B2B-012026-001
+		parts := strings.Split(lastDoc.CodeDocument, "-")
+		if len(parts) > 1 {
+			if lastSeq, err := strconv.Atoi(parts[2]); err == nil {
+				sequence = lastSeq + 1
+			}
+		}
+	}
+
+	code := fmt.Sprintf(
+		"B2B-%s%s-%03d",
+		month,
+		year,
+		sequence,
+	)
+
+	return code, nil
+}
+
 
 
 // ========================= Custom Error =========================

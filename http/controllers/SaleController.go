@@ -427,70 +427,22 @@ func DetailSaleDocument(c *gin.Context) {
 		Category	string	`json:"category"`
 		Qty         int64   `json:"qty"`
 		ProductPriceSale       float64 `json:"product_price_sale"`
-		Type        string  `json:"type"` // product | bundle (opsional tapi berguna)
 	}
-
-	var productBarcodes []string
-	var bundleBarcodes []string
-
-	for _, s := range sale.Sales {
-		if s.ItemType == "product" {
-			productBarcodes = append(productBarcodes, s.BarcodeItem)
-		} else {
-			bundleBarcodes = append(bundleBarcodes, s.BarcodeItem)
-		}
-	}
-
-	// ambil semua product 
-	productMap := map[string]models.Product{}
-	if len(productBarcodes) > 0 {
-		var products []models.Product
-		config.DB.
-			Preload("Category").
-			Where("barcode IN ?", productBarcodes).
-			Find(&products)
-
-		for _, p := range products {
-			productMap[p.Barcode] = p
-		}
-	}
-
-	//ambil semmua bundle
-	bundleMap := map[string]models.Bundle{}
-	if len(bundleBarcodes) > 0 {
-		var bundles []models.Bundle
-		config.DB.
-			Preload("Category").
-			Where("barcode IN ?", bundleBarcodes).
-			Find(&bundles)
-
-		for _, b := range bundles {
-			bundleMap[b.Barcode] = b
-		}
-	}
-
 
 	var sales []saleItemResponse
 	for _, s := range sale.Sales {
 		item := saleItemResponse{
-			ID:                s.ID,
-			Barcode:           s.BarcodeItem,
 			ProductPriceSale:  s.ProductPriceSale,
-			Type:              s.ItemType,
+			NameProduct: s.ProductName,
+			Category: s.ProductCategory,
+			Qty: s.ProductQuantity,
+
 		}
 
-		if s.ItemType == "product" {
-			if p, ok := productMap[s.BarcodeItem]; ok {
-				item.NameProduct = p.Name
-				item.Category = p.Category.NameCategory
-				item.Qty = p.Quantity
-			}
+		if s.ProductBarcode != nil {
+			item.Barcode = *s.ProductBarcode
 		} else {
-			if b, ok := bundleMap[s.BarcodeItem]; ok {
-				item.NameProduct = b.NameBundle
-				item.Category = b.Category.NameCategory
-				item.Qty = b.TotalProduct
-			}
+			item.Barcode = *s.BundleBarcode
 		}
 
 		sales = append(sales, item)
@@ -616,7 +568,14 @@ func AddProductToSaleDocument(c *gin.Context) {
 		product       models.Product
 		bundle        models.Bundle
 		isBundle      bool
+
 		barcodeItem   string
+		itemStatusBefore   string
+
+		productName string
+		productCategory string
+		productQuantity int64
+
 		newPrice      float64
 		oldPrice      float64
 		basePrice     float64
@@ -641,7 +600,6 @@ func AddProductToSaleDocument(c *gin.Context) {
 		return
 	}
 
-	itemType := "product"
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Preload("ProductOld").
 		Preload("Category").
@@ -661,7 +619,7 @@ func AddProductToSaleDocument(c *gin.Context) {
 			})
 			return
 		}
-		itemType = "bundle"
+
 		isBundle = true
 	}
 
@@ -691,6 +649,11 @@ func AddProductToSaleDocument(c *gin.Context) {
 	PRICE SETUP / DEFAULT VALUE
 	=========================== */
 	if isBundle {
+		productName = bundle.NameBundle
+		productCategory = bundle.Category.NameCategory
+		productQuantity = bundle.TotalProduct
+
+		itemStatusBefore = bundle.Status
 		oldPrice = bundle.TotalPrice
 		basePrice = bundle.TotalPriceCustom
 		newPrice = basePrice
@@ -717,6 +680,11 @@ func AddProductToSaleDocument(c *gin.Context) {
 			return
 		}
 	} else {
+		productName = product.Name
+		productCategory = product.Category.NameCategory
+		productQuantity = product.Quantity
+
+		itemStatusBefore = product.Status
 		oldPrice = product.ProductOld.OldPriceProduct
 		basePrice = product.DisplayPrice
 		newPrice = product.Price
@@ -828,14 +796,26 @@ func AddProductToSaleDocument(c *gin.Context) {
 	sale := models.Sale{
 		UserID:            uint64(user.ID),
 		SaleDocumentID:    saleDoc.ID,
-		BarcodeItem:       barcodeItem,
+		ProductName: productName,
+		ProductCategory: productCategory,
+		ProductQuantity: productQuantity,
+		ProductOldPrice: oldPrice,
+		ProductPrice: newPrice,
 		ProductPriceSale:  math.Ceil(productPriceSale),
 		BasePrice:         math.Ceil(basePrice),
 		TotalDiscountSale: math.Ceil(totalDiscount),
 		DiscountSale:      discount,
 		TypeDiscount:      saleDoc.TypeDiscount,
-		StatusSale:        "selesai",
-		ItemType: 			itemType,		
+		StatusSale:        "selesai",	
+		ProductStatusBefore: itemStatusBefore,
+	}
+
+	if isBundle {
+		sale.BundleBarcode = &barcodeItem
+		sale.ProductBarcode = nil
+	}else {
+		sale.BundleBarcode = nil
+		sale.ProductBarcode = &barcodeItem
 	}
 
 	if err := tx.Create(&sale).Error; err != nil {
@@ -1117,6 +1097,14 @@ func StoreProductToSale(c *gin.Context) {
 		return
 	}
 
+	if req.NewDiscount != nil && *req.NewDiscount > 100 {
+		c.JSON(400, gin.H{
+			"success": false,
+			"message": "New Discount tidak boleh lebih dari 100",
+		})
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 
@@ -1152,6 +1140,12 @@ func StoreProductToSale(c *gin.Context) {
 		bundle        models.Bundle
 		isBundle      bool
 		barcodeItem   string
+		itemStatusBefore   string
+
+		productName string
+		productCategory string
+		productQuantity int64
+
 		newPrice      float64
 		oldPrice      float64
 		basePrice     float64
@@ -1159,7 +1153,7 @@ func StoreProductToSale(c *gin.Context) {
 		totalDiscount float64
 	)
 
-	itemType := "product"
+	isBundle = false
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Preload("ProductOld").
 		Preload("Category").
@@ -1180,7 +1174,6 @@ func StoreProductToSale(c *gin.Context) {
 			return
 		}
 		isBundle = true
-		itemType = "bundle"
 	}
 
 	if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
@@ -1243,6 +1236,11 @@ func StoreProductToSale(c *gin.Context) {
 	PRICE SETUP / DEFAULT VALUE
 	=========================== */
 	if isBundle {
+		productName = bundle.NameBundle
+		productCategory = bundle.Category.NameCategory
+		productQuantity = bundle.TotalProduct
+
+		itemStatusBefore = bundle.Status
 		oldPrice = bundle.TotalPrice
 		basePrice = bundle.TotalPriceCustom
 		newPrice = basePrice
@@ -1269,6 +1267,11 @@ func StoreProductToSale(c *gin.Context) {
 			return
 		}
 	} else {
+		productName = product.Name
+		productCategory = product.Category.NameCategory
+		productQuantity = product.Quantity
+
+		itemStatusBefore = product.Status
 		oldPrice = product.ProductOld.OldPriceProduct
 		basePrice = product.DisplayPrice
 		newPrice = product.Price
@@ -1365,14 +1368,26 @@ func StoreProductToSale(c *gin.Context) {
 	sale := models.Sale{
 		UserID:            uint64(user.ID),
 		SaleDocumentID:    saleDoc.ID,
-		BarcodeItem:       barcodeItem,
+		ProductName: productName,
+		ProductCategory: productCategory,
+		ProductQuantity: productQuantity,
+		ProductOldPrice: oldPrice,
+		ProductPrice: newPrice,
 		ProductPriceSale:  math.Ceil(productPriceSale),
 		BasePrice:         math.Ceil(basePrice),
 		TotalDiscountSale: math.Ceil(totalDiscount),
 		DiscountSale:      discount,
 		TypeDiscount:      req.TypeDiscount,
-		StatusSale:        "proses",
-		ItemType: 			itemType,		
+		StatusSale:        "proses",	
+		ProductStatusBefore: itemStatusBefore,
+	}
+
+	if isBundle {
+		sale.BundleBarcode = &barcodeItem
+		sale.ProductBarcode = nil
+	}else {
+		sale.ProductBarcode = &barcodeItem
+		sale.BundleBarcode = nil
 	}
 
 	if err := tx.Create(&sale).Error; err != nil {
@@ -1579,28 +1594,24 @@ func DestroySale(c *gin.Context) {
 		/* ===========================
 		   RESET PRODUCT STATUS
 		=========================== */
-		res := tx.Model(&models.Product{}).
-			Where("barcode = ?", sale.BarcodeItem).
-			Update("status", "display")
-
-		if res.Error != nil {
-			return res.Error
-		}
-
-		if res.RowsAffected == 0 {
-			res = tx.Model(&models.Bundle{}).
-				Where("barcode = ?", sale.BarcodeItem).
-				Update("status", "not_sale")
+		if sale.ProductBarcode != nil {
+			res := tx.Model(&models.Product{}).Where("barcode = ?", sale.ProductBarcode).
+				Update("status", sale.ProductStatusBefore)
+			
+			if res.Error != nil {
+				return res.Error
+			}else if res.RowsAffected == 0 {
+				return fmt.Errorf("Product dengan barcode %s tidak ditemukan", *sale.ProductBarcode)
+			}
+		}else {
+			res := tx.Model(&models.Bundle{}).
+				Where("barcode = ?", sale.BundleBarcode).
+				Update("status", sale.ProductStatusBefore)
 
 			if res.Error != nil {
 				return res.Error
-			}
-
-			if res.RowsAffected == 0 {
-				return fmt.Errorf(
-					"barcode %s tidak ditemukan di product maupun bundle",
-					sale.BarcodeItem,
-				)
+			}else if res.RowsAffected == 0 {
+				return fmt.Errorf("Bundle dengan barcode %s tidak ditemukan", *sale.BundleBarcode)
 			}
 		}
 
@@ -1990,8 +2001,6 @@ func ExportInvoiceSale(c *gin.Context) {
 
 	var saleDoc models.SaleDocument
 	if err := config.DB.Preload("User").
-		Preload("Sales.Product.Category").
-		Preload("Sales.Bundle.Category").
 		First(&saleDoc, sale_doc_id).Error; err != nil {
 		
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -2087,26 +2096,14 @@ func ExportInvoiceSale(c *gin.Context) {
 
 	row++
 	for _, s := range saleDoc.Sales {
-		var (
-			name     string
-			category string
-			barcode  string
-			qty      interface{}
-		)
+		var barcode  string
 
 		// ITEM PRODUCT
-		if s.ItemType == "product" && s.Product != nil {
-			name = s.Product.Name
-			category = s.Product.Category.NameCategory
+		if s.ProductBarcode != nil {
 			barcode = s.Product.Barcode
-			qty = s.Product.Quantity
-
 		// ITEM BUNDLE
-		} else if s.ItemType == "bundle" && s.Bundle != nil {
-			name = s.Bundle.NameBundle
-			category = s.Bundle.Category.NameCategory
+		} else if s.BundleBarcode != nil {
 			barcode = s.Bundle.Barcode
-			qty = s.Bundle.TotalProduct
 
 		// SAFETY FALLBACK
 		} else {
@@ -2119,11 +2116,11 @@ func ExportInvoiceSale(c *gin.Context) {
 		}
 
 		data := []interface{}{
-			name,
-			category,
+			s.ProductName,
+			s.ProductCategory,
 			barcode,
 			s.ProductPriceSale,
-			qty,
+			s.ProductQuantity,
 			s.StatusSale,
 			s.TotalDiscountSale,
 			createdAt,

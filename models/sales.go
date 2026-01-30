@@ -7,8 +7,15 @@ type Sale struct {
 	UserID                   uint64     `gorm:"column:user_id;not null;index" json:"user_id"`
 
 	SaleDocumentID         uint64      `gorm:"not null;index" json:"sale_document_id"`
-	ItemType         		string      `gorm:"not null;type:enum('product', 'bundle')" json:"item_type"` // type item sale
-	BarcodeItem         		string      `gorm:"not null;index" json:"barcode_item"` // merujuk kepada data product / bundle
+	ProductBarcode         		*string      `gorm:"size:255;index" json:"product_barcode"` // merujuk kepada data product
+	BundleBarcode       		*string      `gorm:"size:255;index" json:"bundle_barcode"` // merujuk kepada data bundle
+	
+	ProductName       			string      `gorm:"size:255;not null" json:"product_name"`
+	ProductCategory       		string      `gorm:"size:255;not null" json:"product_category"`
+	ProductOldPrice       		float64      `gorm:"type:decimal(15,2);not null" json:"product_old_price"`
+	ProductPrice       			float64      `gorm:"type:decimal(15,2);not null" json:"product_price"`
+	ProductQuantity       		int64      `gorm:"not null" json:"product_quantity"`
+	ProductStatusBefore         string     `gorm:"column:product_status_before;not null" json:"product_status_before"`
 
 	GaborSale                		*float64    `gorm:"column:gabor_sale;type:decimal(15,2)" json:"gabor_sale"`
 	ProductPriceSale   		 		float64    `gorm:"type:decimal(15,2); not null" json:"product_price_sale"`
@@ -27,7 +34,7 @@ type Sale struct {
 
 	//relation
 	User *User `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
-	Product *Product `gorm:"foreignKey:BarcodeItem;references:Barcode" json:"product,omitempty"`
-	Bundle *Bundle `gorm:"foreignKey:BarcodeItem;references:Barcode" json:"bundle,omitempty"`
+	Product *Product `gorm:"foreignKey:ProductBarcode;references:Barcode" json:"product,omitempty"`
+	Bundle *Bundle `gorm:"foreignKey:BundleBarcode;references:Barcode" json:"bundle,omitempty"`
 	SaleDocument *SaleDocument `gorm:"foreignKey:SaleDocumentID;references:ID" json:"sale_document,omitempty"`
 }
