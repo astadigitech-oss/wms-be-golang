@@ -288,7 +288,7 @@ func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	return "", errors.New("failed to generate unique barcode after max retries")
 }
 
-func GenerateCodeSaleDocument(db *gorm.DB, userID uint64) (string, error) {
+func GenerateCodeSaleDocument(db *gorm.DB) (string, error) {
 	const (
 		length   = 5
 		maxRetry = 10
@@ -300,7 +300,6 @@ func GenerateCodeSaleDocument(db *gorm.DB, userID uint64) (string, error) {
 	// Ambil code terakhir berdasarkan user
 	err := db.
 		Model(&models.SaleDocument{}).
-		Where("user_id = ?", userID).
 		Select("code_document_sale").
 		Order("id DESC").
 		Limit(1).
@@ -333,6 +332,67 @@ func GenerateCodeSaleDocument(db *gorm.DB, userID uint64) (string, error) {
 			WithContext(context.Background()).
 			Model(&models.SaleDocument{}).
 			Where("code_document_sale = ?", barcode).
+			Count(&count).
+			Error
+		if err != nil {
+			return "", err
+		}
+
+		if count == 0 {
+			return barcode, nil
+		}
+
+		// Jika sudah ada, naikkan angka & coba lagi
+		nextID++
+	}
+
+	return "", errors.New("failed to generate unique code after max retries")
+}
+
+func GenerateCodeMigrateColorDocument(db *gorm.DB) (string, error) {
+	const (
+		length   = 4
+		maxRetry = 10
+		prefix   = "LQMGT"
+	)
+
+	var lastCode sql.NullString
+
+	// Ambil code terakhir berdasarkan user
+	err := db.
+		Model(&models.MigrateColorDocument{}).
+		Select("code_document").
+		Order("id DESC").
+		Limit(1).
+		Scan(&lastCode).
+		Error
+	if err != nil {
+		return "", err
+	}
+
+	// Default jika belum ada data
+	nextID := 1
+
+	// Jika sudah ada code sebelumnya
+	if lastCode.Valid {
+		code := lastCode.String // contoh: LQMGT0006
+
+		numPart := code[len(prefix):] // ambil "0006"
+		if num, err := strconv.Atoi(numPart); err == nil {
+			nextID = num + 1
+		}
+	}
+
+	// Retry jika ternyata code bentrok
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+
+		barcode := fmt.Sprintf("%s%0*d", prefix, length, nextID)
+
+		var count int64
+		err := db.
+			WithContext(context.Background()).
+			Model(&models.MigrateColorDocument{}).
+			Where("code_document = ?", barcode).
 			Count(&count).
 			Error
 		if err != nil {

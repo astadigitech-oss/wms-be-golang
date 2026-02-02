@@ -156,6 +156,18 @@ func RouteHandler(r *gin.Engine) {
 		protected.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
 
 		/* ==================== OUTBOUND ==================== */
+		//Migrate Color
+		protected.GET("migrate-color/documents", controllers.GetMigrateDocuments)  //MigrateColorController.go
+		protected.GET("migrate-color/documents/:doc_id", controllers.DetailMigrateDocument)  //MigrateColorController.go
+		protected.GET("display-active-document", controllers.GetActiveMigrateDocument)  //MigrateColorController.go
+		protected.GET("color-destinations", controllers.GetColorDestination)  //MigrateColorController.go
+		protected.GET("migrate-color/destinations", controllers.GetMigrateDestinations)  //MigrateColorController.go
+		protected.POST("migrates", controllers.StoreMigrateColor)  //MigrateColorController.go
+		protected.POST("migrate-color/documents/finish", controllers.MigrateDocumentFinish)  //MigrateColorController.go
+		protected.POST("migrate-color/destinations", controllers.StoreMigrateDestination)  //MigrateColorController.go
+		protected.PUT("migrate-color/destinations/:destination_id", controllers.UpdateMigrateDestination)  //MigrateColorController.go
+		protected.DELETE("migrates/:migrate_id", controllers.DestroyMigrateColor)  //MigrateColorController.go
+		protected.DELETE("migrate-color/destinations/:destination_id", controllers.DestroyMigrateDestination)  //MigrateColorController.go
 		//sale
 		protected.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
 		protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocument) //SaleController.go

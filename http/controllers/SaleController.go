@@ -186,7 +186,7 @@ func SaleIndex(c *gin.Context) {
 	)
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		code, err := helpers.GenerateCodeSaleDocument(db, uint64(user.ID))
+		code, err := helpers.GenerateCodeSaleDocument(db)
 		if err != nil {
 			c.JSON(500, gin.H{"success": false, "message": "gagal generate code document", "error": err.Error()})
 			return
@@ -1212,7 +1212,7 @@ func StoreProductToSale(c *gin.Context) {
 			return
 		}
 
-		code, _ := helpers.GenerateCodeSaleDocument(tx, uint64(user.ID))
+		code, _ := helpers.GenerateCodeSaleDocument(tx)
 		saleDoc = models.SaleDocument{
 			UserID:           uint64(user.ID),
 			CodeDocumentSale: code,

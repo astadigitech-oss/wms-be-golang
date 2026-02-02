@@ -74,6 +74,9 @@ var Tables = []interface{}{
 	&models.BulkyDocument{},
 	&models.BagProduct{},
 	&models.BulkySale{},
+	&models.MigrateColorDocument{},
+	&models.MigrateColorItem{},
+	&models.MigrateColorDestination{},
 }
 
 
