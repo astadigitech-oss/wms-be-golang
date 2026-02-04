@@ -77,6 +77,7 @@ func seedRoles(db *gorm.DB) error {
 		{RoleName: "Admin Kasir"},
 		{RoleName: "Reparasi"},
 		{RoleName: "Developer"},
+		{RoleName: "Kasir leader"},
 	}
 
 	return db.Clauses(clause.OnConflict{
@@ -109,6 +110,7 @@ func seedUsers(db *gorm.DB) error {
 		{Name: "safrudin", Username: "safrudin1", Email: "gebus@gmail.com", Password: string(password), RoleID: 5},
 		{Name: "hayyi", Username: "hayyi1", Email: "cok@gmail.com", Password: string(password), RoleID: 6},
 		{Name: "developer", Username: "developer", Email: "developer@gmail.com", Password: string(password), RoleID: 7},
+		{Name: "kasir_leader", Username: "kasir_leader", Email: "kasir_leader@gmail.com", Password: string(password), RoleID: 8},
 	}
 
 	return db.Clauses(clause.OnConflict{

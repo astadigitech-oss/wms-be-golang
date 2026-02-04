@@ -7,6 +7,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func roleGroup(g *gin.RouterGroup, roles []string, fn func(rg *gin.RouterGroup)) {
+    rg := g.Group("")
+    rg.Use(middleware.RoleCheck(roles))
+    fn(rg)
+}
+
+
+
 func RouteHandler(r *gin.Engine) {
 	api := r.Group("/api") 
 
@@ -15,95 +23,119 @@ func RouteHandler(r *gin.Engine) {
 	api.POST("/login", controllers.Login)
 	api.GET("/checkLogin", controllers.CheckToken)
 
+	// // with rolecheck example
+	// adminOnly := protected.Group("").Use(middleware.RoleCheck([]string{"Admin"}))
+	// {
+	// 	adminOnly.POST("/generate", controllers.ProcessExcelHandler)
+	// 	adminOnly.POST("/generate/merge-headers", controllers.MapAndMergeHeaders)
+	// }
+
 	// Route protected
 	protected := api.Group("")
 	protected.Use(middleware.AuthCheck())
 	{
-		// with rolecheck example
-		// adminOnly := protected.Group("").Use(middleware.RoleCheck([]string{"Admin"}))
-        // {
-        //     adminOnly.POST("/generate", controllers.ProcessExcelHandler)
-        //     adminOnly.POST("/generate/merge-headers", controllers.MapAndMergeHeaders)
-        // }
 		/* ==================== Dashboard ==================== */
-		//StorageReport
-		protected.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir"}, func(rg *gin.RouterGroup) {
+			rg.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
+		})
 		/* ==================== Inbound Routes ==================== */
-		protected.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go
-		protected.POST("/generate/merge-headers", controllers.MapAndMergeHeaders) //GenerateController.go
-		//Bulking Product
-		protected.POST("bulking/product/category", controllers.ImportBulkingCategory) //BulkingController.go
-		// Manifest Inbound Routes
-		protected.GET("/documents", controllers.IndexDocuments) // DocumentController.go
-		protected.GET("/documents/:code/detail", controllers.DetailDocument) // DocumentController.go
-		protected.GET("/documents/:code/search_old_product/:barcode", controllers.SearchProductOld) // DocumentController.go
-		protected.GET("/documents/:code/user_scan_webs", controllers.GetUserScanWeb) // DocumentController.go
-		protected.POST("/documents/custom-barcode", controllers.ChangeCustomBarcode) // DocumentController.go
-		protected.DELETE("/documents/:code", controllers.DestroyDocument) // DocumentController.go
-		protected.DELETE("/documents/product_old/:id", controllers.DestroyProductOld) // DocumentController.go
-		protected.POST("/product-approve/:product_old_id", controllers.ProductApprove) // ProductController.go
-		//Riwayat Check Routes
-		protected.GET("/check-histories", controllers.CheckHistories); //DocumentController.go
-		protected.GET("/check-histories/:history_id", controllers.DetailHistory); //DocumentController.go
-		// Manual Inbound
-		protected.POST("/products/manual", controllers.AddProductManual); //ProductController.go
+		roleGroup(protected, []string{"Spv", "Team leader"}, func(rg *gin.RouterGroup) {
+			rg.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go
+			rg.POST("/generate/merge-headers", controllers.MapAndMergeHeaders) //GenerateController.go
+			//Bulking Product
+			rg.POST("/bulking/product/category", controllers.ImportBulkingCategory) //BulkingController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
+			// Manifest Inbound Routes
+			rg.GET("/documents", controllers.IndexDocuments) // DocumentController.go
+			rg.GET("/documents/:code/detail", controllers.DetailDocument) // DocumentController.go
+			rg.GET("/documents/:code/search_old_product/:barcode", controllers.SearchProductOld) // DocumentController.go
+			rg.GET("/documents/:code/user_scan_webs", controllers.GetUserScanWeb) // DocumentController.go
+			rg.POST("/documents/custom-barcode", controllers.ChangeCustomBarcode) // DocumentController.go
+			rg.DELETE("/documents/:code", controllers.DestroyDocument) // DocumentController.go
+			rg.DELETE("/documents/product_old/:id", controllers.DestroyProductOld) // DocumentController.go
+			rg.POST("/product-approve/:product_old_id", controllers.ProductApprove) // ProductController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader"}, func(rg *gin.RouterGroup) {
+			// Manual Inbound
+			rg.POST("/products/manual", controllers.AddProductManual) //ProductController.go
+			//Riwayat Check Routes
+			rg.GET("/check-histories", controllers.CheckHistories) //DocumentController.go
+			rg.GET("/check-histories/:history_id", controllers.DetailHistory) //DocumentController.go
+		})
 
 		/* ==================== Stagging Routes ==================== */
-		// staging
-		protected.GET("/stagging-products", controllers.StaggingProduct) // ProductController.go
-		protected.GET("/stagging/filter-products", controllers.StaggingFilterProduct) // ProductController.go
-		protected.GET("/stagging-products/:product_id/detail", controllers.StaggingProductDetail) // ProductController.go
-		protected.PUT("/products/:barcode/update", controllers.UpdateDataProduct) // ProductController.go
-		protected.POST("/stagging/filter-products/:product_id", controllers.AddToFilterStaging) // ProductController.go
-		protected.POST("/products/:barcode/to-damaged", controllers.ProductToDamaged) // ProductController.go
-		protected.POST("/stagging-products", controllers.StaggingFilterApprove) // ProductController.go
-		protected.DELETE("/stagging/filter-products/:product_id", controllers.DestroyFilterProduct) // ProductController.go
-		// approvement stagging
-		protected.GET("/stagging-approves", controllers.StaggingApprovement) // ProductController.go
-		protected.POST("/stagging-approves", controllers.StaggingApprovesStore) // ProductController.go
-		protected.DELETE("/stagging-approves/:product_id", controllers.DestroyStaggingApprove) // ProductController.go
-		
-		/* ==================== RACK ==================== */
-		protected.GET("/racks", controllers.GetRacks) //RackController.go
-		protected.GET("/racks/:rack_id/detail", controllers.RackDetail) //RackController.go
-		protected.GET("/racks/list-product", controllers.ProductBySourceRack) //RackController.go
-		protected.POST("/racks", controllers.AddRack) //RackController.go
-		protected.POST("/racks/:rack_id/move-to-display", controllers.MoveRackToDisplay) //RackController.go
-		protected.PUT("/racks/:rack_id", controllers.UpdateRack) //RackController.go
-		protected.POST("/racks/:rack_id/add-product/:barcode", controllers.AddProductToRack) //RackController.go
-		protected.DELETE("/racks/:rack_id/remove-product/:product_id", controllers.RemoveProductFromRack) //RackController.go
-		protected.DELETE("/racks/:rack_id", controllers.DeleteRack) //RackController.go	
-		// protected.PUT("/racks/:id", controllers.UpdateRack) //RackController.go
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader"}, func(rg *gin.RouterGroup) {
+			// staging
+			rg.GET("/stagging-products", controllers.StaggingProduct) // ProductController.go
+			rg.GET("/stagging/filter-products", controllers.StaggingFilterProduct) // ProductController.go
+			rg.GET("/stagging-products/:product_id/detail", controllers.StaggingProductDetail) // ProductController.go
+			rg.PUT("/products/:barcode/update", controllers.UpdateDataProduct) // ProductController.go
+			rg.POST("/stagging/filter-products/:product_id", controllers.AddToFilterStaging) // ProductController.go
+			rg.POST("/stagging-products", controllers.StaggingFilterApprove) // ProductController.go
+			rg.DELETE("/stagging/filter-products/:product_id", controllers.DestroyFilterProduct) // ProductController.go
+			// approvement stagging
+			rg.GET("/stagging-approves", controllers.StaggingApprovement) // ProductController.go
+			rg.POST("/stagging-approves", controllers.StaggingApprovesStore) // ProductController.go
+			rg.DELETE("/stagging-approves/:product_id", controllers.DestroyStaggingApprove) // ProductController.go
+			
+			/* ==================== RACK ==================== */
+			rg.GET("/racks", controllers.GetRacks) //RackController.go
+			rg.GET("/racks/:rack_id/detail", controllers.RackDetail) //RackController.go
+			rg.GET("/racks/list-product", controllers.ProductBySourceRack) //RackController.go
+			rg.POST("/racks", controllers.AddRack) //RackController.go
+			rg.POST("/racks/:rack_id/move-to-display", controllers.MoveRackToDisplay) //RackController.go
+			rg.PUT("/racks/:rack_id", controllers.UpdateRack) //RackController.go
+			rg.POST("/racks/:rack_id/add-product/:barcode", controllers.AddProductToRack) //RackController.go
+			rg.DELETE("/racks/:rack_id/remove-product/:product_id", controllers.RemoveProductFromRack) //RackController.go
+			rg.DELETE("/racks/:rack_id", controllers.DeleteRack) //RackController.go	
+			// protected.PUT("/racks/:id", controllers.UpdateRack) //RackController.go
+		})
 
 		/* ==================== INVENTORY ==================== */
 		//Product
-		protected.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
-		protected.GET("/products/:product_id/detail", controllers.GetDetailProduct) // ProductController.go
-		protected.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader"}, func(rg *gin.RouterGroup) {
+			rg.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader"}, func(rg *gin.RouterGroup) {
+			rg.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
+			rg.POST("/products/:barcode/to-damaged", controllers.ProductToDamaged) // ProductController.go
+		})
+		
 		protected.GET("/products/status/display-expired", controllers.GetProductsStatusDisplayExpired) // ProductController.go
+		protected.GET("/products/:product_id/detail", controllers.GetDetailProduct) // ProductController.go
 		protected.PUT("/products/:barcode/status-dump", controllers.ProductToDump) // ProductController.go
 		protected.DELETE("/products/inventory/:id", controllers.DeleteProductInventory) // ProductController.go
-		//category Setting
-		protected.GET("/categories", controllers.Categories) //CategoryController.go
-		protected.POST("/categories", controllers.AddCategory) //CategoryController.go
-		protected.PUT("/categories/:id", controllers.UpdateCategory) //CategoryController.go
-		protected.DELETE("/categories/:id", controllers.DeleteCategory) //CategoryController.go
-		protected.GET("/color_tags", controllers.TagColors) //ColorTagController.go
-		protected.POST("/color_tags", controllers.AddTagColor) //ColorTagController.go
-		protected.PUT("/color_tags/:id", controllers.UpdateTagColor) //ColorTagController.go
-		protected.DELETE("/color_tags/:id", controllers.DeleteTagColor) //ColorTagController.go
-		//Moving Product -> bundle
-		protected.GET("/bundles", controllers.GetBundles) //BundleController.go
-		protected.GET("/bundle/product-type-colors", controllers.GetProductTypeColor) //BundleController.go
-		protected.GET("/bundle/filter-product", controllers.GetBundleFilterProduct) //BundleController.go
-		protected.GET("/bundles/:bundle_id/detail", controllers.GetBundleDetail) //BundleController.go 
-		protected.POST("/bundle/:bundle_id/product-bundle/:product_id", controllers.AddProductBundle) //BundleController.go 
-		protected.POST("/bundles", controllers.CreateBundleProduct) //BundleController.go
-		protected.POST("/bundle/filter-product/:id", controllers.BundleAddFilterProduct) //BundleController.go
-		protected.PUT("/bundles/:bundle_id", controllers.UpdateBundle) //BundleController.go
-		protected.DELETE("/bundle/items/:item_id", controllers.DeleteProductBundle) //BundleController.go
-		protected.DELETE("/bundles/:bundle_id", controllers.Unbundle) //BundleController.go
-		protected.DELETE("/bundle/filter-product/:id", controllers.BundleDeleteFilterProduct) //BundleController.go
+
+		roleGroup(protected, []string{"Admin", "Spv"}, func(rg *gin.RouterGroup) {
+			//category Setting
+			rg.GET("/categories", controllers.Categories) //CategoryController.go
+			rg.POST("/categories", controllers.AddCategory) //CategoryController.go
+			rg.PUT("/categories/:id", controllers.UpdateCategory) //CategoryController.go
+			rg.DELETE("/categories/:id", controllers.DeleteCategory) //CategoryController.go
+			rg.GET("/color_tags", controllers.TagColors) //ColorTagController.go
+			rg.POST("/color_tags", controllers.AddTagColor) //ColorTagController.go
+			rg.PUT("/color_tags/:id", controllers.UpdateTagColor) //ColorTagController.go
+			rg.DELETE("/color_tags/:id", controllers.DeleteTagColor) //ColorTagController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
+			//Moving Product -> bundle
+			rg.GET("/bundles", controllers.GetBundles) //BundleController.go
+			rg.GET("/bundle/product-type-colors", controllers.GetProductTypeColor) //BundleController.go
+			rg.GET("/bundle/filter-product", controllers.GetBundleFilterProduct) //BundleController.go
+			rg.GET("/bundles/:bundle_id/detail", controllers.GetBundleDetail) //BundleController.go 
+			rg.POST("/bundle/:bundle_id/product-bundle/:product_id", controllers.AddProductBundle) //BundleController.go 
+			rg.POST("/bundles", controllers.CreateBundleProduct) //BundleController.go
+			rg.POST("/bundle/filter-product/:id", controllers.BundleAddFilterProduct) //BundleController.go
+			rg.PUT("/bundles/:bundle_id", controllers.UpdateBundle) //BundleController.go
+			rg.DELETE("/bundle/items/:item_id", controllers.DeleteProductBundle) //BundleController.go
+			rg.DELETE("/bundles/:bundle_id", controllers.Unbundle) //BundleController.go
+			rg.DELETE("/bundle/filter-product/:id", controllers.BundleDeleteFilterProduct) //BundleController.go
+		})
 		//====================
 		//Moving Product -> repair
 		// protected.GET("/repair-bundles", controllers.GetRepairBundles) //BundleController.go
@@ -111,114 +143,146 @@ func RouteHandler(r *gin.Engine) {
 		// protected.PUT("/repair-items/:item_id/update", controllers.UpdateRepairProduct) //BundleController.go
 		// protected.PUT("/repair-items/:item_id/to-display", controllers.ProductRepairToDisplay) //BundleController.go
 		// protected.PUT("/repair-items/:item_id/dump", controllers.DumpProductRepair) //BundleController.go
-		//Slow Moving Product -> promo
-		protected.GET("/promos", controllers.GetPromos) // ProductController.go
-		protected.POST("/promos", controllers.AddPromoProduct) // ProductController.go
-		//Slow Moving Product - BKL
-		protected.GET("/bkl-documents", controllers.ListBKLDocuments) //DocumentController.go
-		protected.GET("/bkl-document/generate-code", controllers.GenerateBKLCode) //DocumentController.go
-		protected.GET("/bkl-document/:id/detail", controllers.DetailBKL) //DocumentController.go
-		protected.POST("/bkl-document", controllers.CreateBKL) //DocumentController.go
-		protected.POST("/bkl-document/:id/to-edit", controllers.ToEditBKL) //DocumentController.go
-		protected.PUT("/bkl-document/:id", controllers.UpdateBKL) //DocumentController.go
-		//Stock Opname -> color
-		protected.GET("/summary-so-colors", controllers.GetSummarySoColors) //SOController.go
-		protected.GET("/summary-so-colors/:id", controllers.DetailSummarySoColor) //SOController.go
-		protected.POST("/submit/so-color", controllers.SubmitSoColor) //SOController.go
-		protected.POST("/start-so-color", controllers.StartSoColor) //SOController.go
-		protected.POST("/stop-so-color", controllers.StopSoColor) //SOController.go
-		//Stock Opname -> category
-		protected.GET("/summary-so-categories", controllers.GetSummarySoCategories) //SOController.go
-		protected.GET("/summary-so-categories/:id", controllers.DetailSummarySoCategory) //SOController.go
-		protected.GET("/filter-so-category", controllers.FilterSoCategory) //SOController.go
-		protected.GET("/search-so-category", controllers.SearchSoCategory) //SOController.go
-		protected.POST("/update-check-so", controllers.UpdateCheck) //SOController.go
-		protected.POST("/start-so-category", controllers.StartSoCategory) //SOController.go
-		protected.POST("/stop-so-category", controllers.StopSoCategory) //SOController.go
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader"}, func(rg *gin.RouterGroup) {
+			//Slow Moving Product -> promo
+			rg.GET("/promos", controllers.GetPromos) // ProductController.go
+			rg.POST("/promos", controllers.AddPromoProduct) // ProductController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
+			//Slow Moving Product - BKL
+			rg.GET("/bkl-documents", controllers.ListBKLDocuments) //DocumentController.go
+			rg.GET("/bkl-document/generate-code", controllers.GenerateBKLCode) //DocumentController.go
+			rg.GET("/bkl-document/:id/detail", controllers.DetailBKL) //DocumentController.go
+			rg.POST("/bkl-document", controllers.CreateBKL) //DocumentController.go
+			rg.POST("/bkl-document/:id/to-edit", controllers.ToEditBKL) //DocumentController.go
+			rg.PUT("/bkl-document/:id", controllers.UpdateBKL) //DocumentController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader"}, func(rg *gin.RouterGroup) {
+			//Stock Opname -> color
+			rg.GET("/summary-so-colors", controllers.GetSummarySoColors) //SOController.go
+			rg.GET("/summary-so-colors/:id", controllers.DetailSummarySoColor) //SOController.go
+			rg.POST("/submit/so-color", controllers.SubmitSoColor) //SOController.go
+			rg.POST("/start-so-color", controllers.StartSoColor) //SOController.go
+			rg.POST("/stop-so-color", controllers.StopSoColor) //SOController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv"}, func(rg *gin.RouterGroup) {
+			//Stock Opname -> category
+			rg.GET("/summary-so-categories", controllers.GetSummarySoCategories) //SOController.go
+			rg.GET("/summary-so-categories/:id", controllers.DetailSummarySoCategory) //SOController.go
+			rg.GET("/filter-so-category", controllers.FilterSoCategory) //SOController.go
+			rg.GET("/search-so-category", controllers.SearchSoCategory) //SOController.go
+			rg.POST("/update-check-so", controllers.UpdateCheck) //SOController.go
+			rg.POST("/start-so-category", controllers.StartSoCategory) //SOController.go
+			rg.POST("/stop-so-category", controllers.StopSoCategory) //SOController.go
+		})
 
 		/* ==================== REPAIR STATION ==================== */
-		//Migrate To Repair
-		protected.GET("/migrate-repair-docs", controllers.ListMigrateRepairDocs) //DocumentController.go
-		protected.GET("/migrate-repair-docs/:id", controllers.DetailMigrateRepairDocs) //DocumentController.go
-		protected.GET("/migrate-products", controllers.ListMigrateProducts) //DocumentController.go
-		protected.POST("/migrate-products/add", controllers.AddMigrateProduct) //DocumentController.go
-		protected.PUT("/migrate-repair-docs/items/:item_id/update", controllers.MigrateProductUpdate) //DocumentController.go
-		protected.PUT("/migrate-repair-docs/items/:item_id/to-display", controllers.MigrateProductToDisplay) //DocumentController.go
-		protected.PUT("/migrate-repair-docs/items/:item_id/status-dump", controllers.MigrateProductToDump) //DocumentController.go
-		//Abnormal
-		protected.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
-		protected.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
-		//Damaged
-		protected.GET("/products/damaged", controllers.GetProductDamaged) //ProductController.go
-		protected.PUT("/products/damaged/:product_id/to-display", controllers.DamagedToDisplay) //ProductController.go
-		//Non
-		protected.GET("/products/non", controllers.GetProductNon) //ProductController.go
-		protected.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader", "Reparasi", "Admin Kasir"}, func(rg *gin.RouterGroup) {
+			//Migrate To Repair
+			rg.GET("/migrate-repair-docs", controllers.ListMigrateRepairDocs) //DocumentController.go
+			rg.GET("/migrate-repair-docs/:id", controllers.DetailMigrateRepairDocs) //DocumentController.go
+			rg.GET("/migrate-products", controllers.ListMigrateProducts) //DocumentController.go
+			rg.POST("/migrate-products/add", controllers.AddMigrateProduct) //DocumentController.go
+			rg.PUT("/migrate-repair-docs/items/:item_id/update", controllers.MigrateProductUpdate) //DocumentController.go
+			rg.PUT("/migrate-repair-docs/items/:item_id/to-display", controllers.MigrateProductToDisplay) //DocumentController.go
+			rg.PUT("/migrate-repair-docs/items/:item_id/status-dump", controllers.MigrateProductToDump) //DocumentController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Reparasi"}, func(rg *gin.RouterGroup) {
+			//Abnormal
+			rg.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
+			rg.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
+			//Damaged
+			rg.GET("/products/damaged", controllers.GetProductDamaged) //ProductController.go
+			rg.PUT("/products/damaged/:product_id/to-display", controllers.DamagedToDisplay) //ProductController.go
+			//Non
+			rg.GET("/products/non", controllers.GetProductNon) //ProductController.go
+			rg.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
+		})
 
 		/* ==================== OUTBOUND ==================== */
-		//Migrate Color
-		protected.GET("migrate-color/documents", controllers.GetMigrateDocuments)  //MigrateColorController.go
-		protected.GET("migrate-color/documents/:doc_id", controllers.DetailMigrateDocument)  //MigrateColorController.go
-		protected.GET("display-active-document", controllers.GetActiveMigrateDocument)  //MigrateColorController.go
-		protected.GET("color-destinations", controllers.GetColorDestination)  //MigrateColorController.go
-		protected.GET("migrate-color/destinations", controllers.GetMigrateDestinations)  //MigrateColorController.go
-		protected.POST("migrates", controllers.StoreMigrateColor)  //MigrateColorController.go
-		protected.POST("migrate-color/documents/finish", controllers.MigrateDocumentFinish)  //MigrateColorController.go
-		protected.POST("migrate-color/destinations", controllers.StoreMigrateDestination)  //MigrateColorController.go
-		protected.PUT("migrate-color/destinations/:destination_id", controllers.UpdateMigrateDestination)  //MigrateColorController.go
-		protected.DELETE("migrates/:migrate_id", controllers.DestroyMigrateColor)  //MigrateColorController.go
-		protected.DELETE("migrate-color/destinations/:destination_id", controllers.DestroyMigrateDestination)  //MigrateColorController.go
-		//sale
-		protected.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
-		protected.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocument) //SaleController.go
-		protected.GET("sale-documents/invoice-sale/:sale_doc_id", controllers.ExportInvoiceSale) //SaleController.go
-		protected.GET("sales", controllers.SaleIndex) //SaleController.go
-		protected.GET("sale/products", controllers.GetProductsForSale) //ProductController.go
-		protected.POST("sale-documents/add-product", controllers.AddProductToSaleDocument) //SaleController.go
-		protected.POST("sale/products/add", controllers.StoreProductToSale) //SaleController.go
-		protected.POST("sales/finish", controllers.SaleFinish) //SaleController.go
-		protected.PUT("sale-documents/:sale_doc_id", controllers.UpdateSaleDocument) //SaleController.go
-		protected.PUT("sales/:sale_id/update-price", controllers.UpdatePriceSale) //SaleController.go
-		protected.DELETE("sales/:sale_id", controllers.DestroySale) //SaleController.go
-		protected.GET("ppn", controllers.GetPPN) //PPNController.go
-		protected.POST("ppn", controllers.StorePPN) //PPNController.go
-		protected.PUT("ppn/:ppn_id", controllers.UpdatePPN) //PPNController.go
-		protected.DELETE("ppn/:ppn_id", controllers.DeletePPN) //PPNController.go
-		//B2B
-		protected.GET("bulky-documents", controllers.GetBulkyDocuments) //BulkyController.go
-		protected.GET("bulky-documents/:doc_id/bags", controllers.BagByUser) //BulkyController.go
-		protected.GET("bulky-documents/bags/:bag_id", controllers.ShowBagProductDetail) //BulkyController.go
-		protected.GET("bulky-documents/:doc_id/detail", controllers.DetailBulkyDocument) //BulkyController.go
-		protected.POST("bulky-documents", controllers.CreateBulkyDocument) //BulkyController.go
-		protected.POST("bulky-documents/:doc_id/bags", controllers.StoreBagBulkyDocument) //BulkyController.go
-		protected.POST("bulky-documents/:doc_id/export", controllers.ExportBulkyDocument) //BulkyController.go
-		protected.POST("bulky-sales/product", controllers.StoreBulkySale) //BulkyController.go
-		protected.POST("bulky-sales/product/import", controllers.ImportFileBulkySale) //BulkyController.go
-		protected.PUT("bulky-documents/:bulky_doc_id", controllers.UpdateBulkyDocument) //BulkyController.go
-		protected.PUT("bulky-documents/:bulky_doc_id/finish", controllers.BulkyDocumentFinish) //BulkyController.go
-		protected.DELETE("bulky-documents/bags/:bag_id", controllers.DestroyBagBulkyDocument) //BulkyController.go
-		protected.DELETE("bulky-sales/product/:bulky_sale_id", controllers.DeleteBulkySale) //BulkyController.go
-		//Buyer
-		protected.GET("buyers", controllers.GetBuyers) //BuyerController.go
-		protected.GET("monthly-buyer", controllers.GetBuyerMonthlyPoints) //BuyerController.go
-		protected.GET("summary-buyer", controllers.GetBuyerSummary) //BuyerController.go
-		//QCD
-		protected.GET("scraps", controllers.GetScrapDocuments) //DocumentController.go
-		protected.GET("scraps/:scrap_id", controllers.DetailScrapDocuments) //DocumentController.go
-		protected.GET("scrap/product-dumps", controllers.GetProductDumps) //DocumentController.go
-		protected.GET("scrap/session", controllers.GetActiveSession) //DocumentController.go
-		protected.POST("scraps/:scrap_id/scrap-all", controllers.AddAllProductToScrap) //DocumentController.go
-		protected.POST("scraps/:scrap_id/product/:barcode", controllers.AddProductToScrap) //DocumentController.go
-		protected.POST("scraps/:scrap_id/lock", controllers.LockScrapDocument) //DocumentController.go
-		protected.POST("scraps/:scrap_id/finish", controllers.FinishScrapDocument) //DocumentController.go
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader"}, func(rg *gin.RouterGroup) {
+			//Migrate Color
+			rg.GET("migrate-color/documents", controllers.GetMigrateDocuments)  //MigrateColorController.go
+			rg.GET("migrate-color/documents/:doc_id", controllers.DetailMigrateDocument)  //MigrateColorController.go
+			rg.GET("display-active-document", controllers.GetActiveMigrateDocument)  //MigrateColorController.go
+			rg.GET("color-destinations", controllers.GetColorDestination)  //MigrateColorController.go
+			rg.GET("migrate-color/destinations", controllers.GetMigrateDestinations)  //MigrateColorController.go
+			rg.POST("migrates", controllers.StoreMigrateColor)  //MigrateColorController.go
+			rg.POST("migrate-color/documents/finish", controllers.MigrateDocumentFinish)  //MigrateColorController.go
+			rg.POST("migrate-color/destinations", controllers.StoreMigrateDestination)  //MigrateColorController.go
+			rg.PUT("migrate-color/destinations/:destination_id", controllers.UpdateMigrateDestination)  //MigrateColorController.go
+			rg.DELETE("migrates/:migrate_id", controllers.DestroyMigrateColor)  //MigrateColorController.go
+			rg.DELETE("migrate-color/destinations/:destination_id", controllers.DestroyMigrateDestination)  //MigrateColorController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Admin Kasir", "Kasir leader"}, func(rg *gin.RouterGroup) {
+			//sale
+			rg.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
+			rg.GET("sale-documents/:sale_doc_id", controllers.DetailSaleDocument) //SaleController.go
+			rg.GET("sale-documents/invoice-sale/:sale_doc_id", controllers.ExportInvoiceSale) //SaleController.go
+			rg.GET("sales", controllers.SaleIndex) //SaleController.go
+			rg.GET("sale/products", controllers.GetProductsForSale) //ProductController.go
+			rg.POST("sale-documents/add-product", controllers.AddProductToSaleDocument) //SaleController.go
+			rg.POST("sale/products/add", controllers.StoreProductToSale) //SaleController.go
+			rg.POST("sales/finish", controllers.SaleFinish) //SaleController.go
+			rg.PUT("sale-documents/:sale_doc_id", controllers.UpdateSaleDocument) //SaleController.go
+			rg.PUT("sales/:sale_id/update-price", controllers.UpdatePriceSale) //SaleController.go
+			rg.DELETE("sales/:sale_id", controllers.DestroySale) //SaleController.go
+			rg.GET("ppn", controllers.GetPPN) //PPNController.go
+			rg.POST("ppn", controllers.StorePPN) //PPNController.go
+			rg.PUT("ppn/:ppn_id", controllers.UpdatePPN) //PPNController.go
+			rg.DELETE("ppn/:ppn_id", controllers.DeletePPN) //PPNController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
+			//B2B
+			rg.GET("bulky-documents", controllers.GetBulkyDocuments) //BulkyController.go
+			rg.GET("bulky-documents/:doc_id/bags", controllers.BagByUser) //BulkyController.go
+			rg.GET("bulky-documents/bags/:bag_id", controllers.ShowBagProductDetail) //BulkyController.go
+			rg.GET("bulky-documents/:doc_id/detail", controllers.DetailBulkyDocument) //BulkyController.go
+			rg.POST("bulky-documents", controllers.CreateBulkyDocument) //BulkyController.go
+			rg.POST("bulky-documents/:doc_id/bags", controllers.StoreBagBulkyDocument) //BulkyController.go
+			rg.POST("bulky-documents/:doc_id/export", controllers.ExportBulkyDocument) //BulkyController.go
+			rg.POST("bulky-sales/product", controllers.StoreBulkySale) //BulkyController.go
+			rg.POST("bulky-sales/product/import", controllers.ImportFileBulkySale) //BulkyController.go
+			rg.PUT("bulky-documents/:bulky_doc_id", controllers.UpdateBulkyDocument) //BulkyController.go
+			rg.PUT("bulky-documents/:bulky_doc_id/finish", controllers.BulkyDocumentFinish) //BulkyController.go
+			rg.DELETE("bulky-documents/bags/:bag_id", controllers.DestroyBagBulkyDocument) //BulkyController.go
+			rg.DELETE("bulky-sales/product/:bulky_sale_id", controllers.DeleteBulkySale) //BulkyController.go
+		})
+		roleGroup(protected, []string{"Admin", "Spv", "Admin Kasir", "Kasir leader"}, func(rg *gin.RouterGroup) {
+			//Buyer
+			rg.GET("buyers", controllers.GetBuyers) //BuyerController.go
+			rg.GET("monthly-buyer", controllers.GetBuyerMonthlyPoints) //BuyerController.go
+			rg.GET("summary-buyer", controllers.GetBuyerSummary) //BuyerController.go
+		})
+
+		roleGroup(protected, []string{"Admin", "Spv", "Reparasi"}, func(rg *gin.RouterGroup) {
+			//QCD
+			rg.GET("scraps", controllers.GetScrapDocuments) //DocumentController.go
+			rg.GET("scraps/:scrap_id", controllers.DetailScrapDocuments) //DocumentController.go
+			rg.GET("scrap/product-dumps", controllers.GetProductDumps) //DocumentController.go
+			rg.GET("scrap/session", controllers.GetActiveSession) //DocumentController.go
+			rg.POST("scraps/:scrap_id/scrap-all", controllers.AddAllProductToScrap) //DocumentController.go
+			rg.POST("scraps/:scrap_id/product/:barcode", controllers.AddProductToScrap) //DocumentController.go
+			rg.POST("scraps/:scrap_id/lock", controllers.LockScrapDocument) //DocumentController.go
+			rg.POST("scraps/:scrap_id/finish", controllers.FinishScrapDocument) //DocumentController.go
+		})
+		//Pallet Bulky
 
 		/* ==================== ACCOUNT ==================== */
-		//Account Setting
-		protected.GET("/users", controllers.GetUsers) //UserController.go
-		protected.GET("/roles", controllers.GetRoles) //UserController.go
-		protected.POST("/users", controllers.CreateUser) //UserController.go
-		protected.PUT("/users/:id", controllers.UpdateUser) //UserController.go
-		protected.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
+		roleGroup(protected, []string{"Admin", "Spv"}, func(rg *gin.RouterGroup) {
+			//Account Setting
+			rg.GET("/users", controllers.GetUsers) //UserController.go
+			rg.GET("/roles", controllers.GetRoles) //UserController.go
+			rg.POST("/users", controllers.CreateUser) //UserController.go
+			rg.PUT("/users/:id", controllers.UpdateUser) //UserController.go
+			rg.DELETE("/users/:id", controllers.DeleteUser) //UserController.go
+		})
 
 		/* ==================== GENERALE ==================== */
 		//Account Setting
