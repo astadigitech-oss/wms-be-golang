@@ -331,7 +331,7 @@ func MapAndMergeHeaders(c *gin.Context) {
 
         records = append(records, models.ProductOld{
             CodeDocument:       &req.CodeDocument,
-            InboundType:     "import-excel",
+            InboundType:        "inbound-proses",
             OldBarcodeProduct:  &noResi,
             OldNameProduct:     nama,
             OldQuantityProduct: qty,

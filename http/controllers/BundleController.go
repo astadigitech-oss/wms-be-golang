@@ -93,7 +93,6 @@ func GetProductTypeColor(c *gin.Context) {
 	//inisialisasi query
 	baseQuery := config.DB.Model(&models.Product{}).
         Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
-        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
         Where("products.status IN ?", []string{"display", "expired"}).
         Where("products.location_type = ?", "main").
         Where("products.category_id IS NULL").
@@ -105,7 +104,7 @@ func GetProductTypeColor(c *gin.Context) {
 	if q != "" {
 		searchPattern := "%" + q + "%"
 		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
-            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.old_barcode_product LIKE ? OR " + 
             "products.name LIKE ? OR " + 
             "products.code_document LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
 	}
@@ -131,11 +130,11 @@ func GetProductTypeColor(c *gin.Context) {
     err := baseQuery.Session(&gorm.Session{}).
         Select(`
             products.id, 
-            product_olds.old_barcode_product AS old_barcode, 
+            products.old_barcode_product AS old_barcode, 
             products.barcode AS new_barcode, 
             products.name AS name, 
             products.price AS price, 
-            product_olds.old_price_product AS old_price, 
+            products.old_price_product AS old_price, 
             products.status AS status, 
             color_tags.name_color AS category
         `).
@@ -237,11 +236,10 @@ func GetBundleFilterProduct(c *gin.Context) {
 	if err := config.DB.
 		Table("bundle_items").
 		Joins("JOIN products ON products.id = bundle_items.product_id").
-		Joins("JOIN product_olds po ON po.id = products.product_old_id").
 		Where("bundle_items.user_id = ?", user.ID).
 		Where("bundle_items.bundle_id IS NULL").
 		Where("bundle_items.bundle_stage = ?", "bundle_filter").
-		Select("COALESCE(SUM(po.old_price_product), 0)").
+		Select("COALESCE(SUM(products.old_price_product), 0)").
 		Scan(&totalPrice).Error; err != nil {
 
 		c.JSON(500, gin.H{"success": false, "error": err.Error()})
@@ -292,12 +290,11 @@ func GetBundleFilterProduct(c *gin.Context) {
 	if err := config.DB.
 		Table("bundle_items").
 		Joins("LEFT JOIN products ON products.id = bundle_items.product_id").
-		Joins("LEFT JOIN product_olds po ON po.id = products.product_old_id").
 		Select(`
 			bundle_items.id,
 			products.barcode AS new_barcode,
 			products.name AS product_name,
-			po.old_price_product AS old_price
+			products.old_price_product AS old_price
 		`).
 		Where("bundle_items.user_id = ?", user.ID).
 		Where("bundle_items.bundle_id IS NULL").
@@ -362,8 +359,7 @@ func AddProductBundle(c *gin.Context) {
 
 	//get data product
 	var product models.Product
-    if err := tx.Preload("ProductOld").
-		Where("status IN ?", []string{"display", "expired"}).
+    if err := tx.Where("status IN ?", []string{"display", "expired"}).
 		Where("category_id IS NULL").
 		Where("tag_color_id IS NOT NULL").
 		Where("location_type = ?", "main").
@@ -394,7 +390,7 @@ func AddProductBundle(c *gin.Context) {
 	var newTotalPrice float64
 	switch bundle.BundleType {
 	case "bundle":
-		newTotalPrice = bundle.TotalPrice + product.ProductOld.OldPriceProduct
+		newTotalPrice = bundle.TotalPrice + product.OldPriceProduct
 	case "repair":
 		newTotalPrice = bundle.TotalPrice + product.Price
 	} 
@@ -487,7 +483,7 @@ func DeleteProductBundle(c *gin.Context) {
 
 	//get data product
 	var product models.Product
-    if err := tx.Preload("ProductOld").First(&product, item.ProductID).Error; err != nil {
+    if err := tx.First(&product, item.ProductID).Error; err != nil {
         tx.Rollback()
         c.JSON(404, gin.H{"status": false, "message": "Product not found"})
         return
@@ -502,10 +498,7 @@ func DeleteProductBundle(c *gin.Context) {
 
 	//update bundle
 	var newTotalPrice float64
-	oldPrice := float64(0)
-	if product.ProductOld != nil {
-		oldPrice = product.ProductOld.OldPriceProduct
-	}
+	oldPrice := product.OldPriceProduct
 	
 	newTotalPrice = bundle.TotalPrice - oldPrice	
 	totalProduct := bundle.TotalProduct - 1
@@ -638,7 +631,7 @@ func CreateBundleProduct(c *gin.Context) {
 	}
 
     var bundleItems []models.BundleItem
-    err := config.DB.Preload("Product.ProductOld").
+    err := config.DB.Preload("Product").
         Where("user_id = ? AND bundle_stage = ?", user.ID, item_filter).
         Find(&bundleItems).Error
 
@@ -674,12 +667,10 @@ func CreateBundleProduct(c *gin.Context) {
         // Pastikan relasi tidak nil untuk menghindari panic
 		switch payload.BundleType {
 		case "bundle":
-			if item.Product != nil && item.Product.ProductOld != nil {
-				totalPrice += item.Product.ProductOld.OldPriceProduct
-			}
+			totalPrice += item.Product.OldPriceProduct
 		case "repair":
 			totalPrice += item.Product.Price
-			totalPriceCustom += item.Product.ProductOld.OldPriceProduct
+			totalPriceCustom += item.Product.OldPriceProduct
 		}
 
 		itemIDs = append(itemIDs, item.ID)
@@ -1380,7 +1371,6 @@ func GetRepairFilterProduct(c *gin.Context) {
 	// =====================
 	baseQuery := db.Table("bundle_items").
 		Joins("JOIN products ON products.id = bundle_items.product_id").
-		Joins("JOIN product_olds po ON po.id = products.product_old_id").
 		Where("bundle_items.user_id = ?", user.ID).
 		Where("bundle_items.bundle_id IS NULL").
 		Where("bundle_items.bundle_stage = ?", "repair_filter")
@@ -1434,7 +1424,7 @@ func GetRepairFilterProduct(c *gin.Context) {
 			products.barcode AS new_barcode,
 			products.name AS product_name,
 			products.price AS new_price,
-			po.old_price_product AS old_price
+			products.old_price_product AS old_price
 		`).
 		Order("bundle_items.created_at DESC").
 		Limit(limit).
@@ -1566,7 +1556,7 @@ func UpdateRepairProduct(c *gin.Context) {
 	}
 
 	var product models.Product
-	if err := tx.Preload("ProductOld").First(&product, item.ProductID).Error; err != nil {
+	if err := tx.First(&product, item.ProductID).Error; err != nil {
 		c.JSON(404, gin.H{
 			"success": false,
 			"message": "Data product tidak ditemukan",
@@ -1654,7 +1644,7 @@ func UpdateRepairProduct(c *gin.Context) {
             "new_name":       product.Name,
             "new_quantity":   product.Quantity,
             "new_price":   product.Price,
-            "old_price":      product.ProductOld.OldPriceProduct, // Harga lama di Staging
+            "old_price":      product.OldPriceProduct, // Harga lama di Staging
         },
     }
 	action := fmt.Sprintf("Melakukan update data repair product %s (%s)", product.Name, product.Barcode)
@@ -1681,17 +1671,17 @@ func UpdateRepairProduct(c *gin.Context) {
 		return
 	}
 
-	if err := tx.Model(&models.ProductOld{}).Where("id = ?", product.ProductOldID).
-		Update("old_price_product", req.OldPriceProduct).Error; err != nil {
-		c.JSON(500, gin.H{
-			"success": false,
-			"message": "Gagal update data product old!",
-			"error":   err.Error(),
-		})
+	// if err := tx.Model(&models.ProductOld{}).Where("id = ?", product.ProductOldID).
+	// 	Update("old_price_product", req.OldPriceProduct).Error; err != nil {
+	// 	c.JSON(500, gin.H{
+	// 		"success": false,
+	// 		"message": "Gagal update data product old!",
+	// 		"error":   err.Error(),
+	// 	})
 
-		tx.Rollback()
-		return
-	}
+	// 	tx.Rollback()
+	// 	return
+	// }
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(500, gin.H{
@@ -1740,8 +1730,7 @@ func ProductRepairToDisplay(c *gin.Context) {
 
 	//cari bundle item terkait
 	var product models.Product
-    if err := tx.Preload("ProductOld").
-		Where("id = ? AND status = ?", item.ProductID, "repair").First(&product).Error; err != nil {
+    if err := tx.Where("id = ? AND status = ?", item.ProductID, "repair").First(&product).Error; err != nil {
         tx.Rollback()
         c.JSON(404, gin.H{"status": false, "message": "Produk item tidak ditemukan"})
         return
@@ -1762,10 +1751,7 @@ func ProductRepairToDisplay(c *gin.Context) {
         return
     }
 
-	oldPrice := float64(0)
-	if product.ProductOld != nil {
-		oldPrice = product.ProductOld.OldPriceProduct
-	}
+	oldPrice := product.OldPriceProduct
 
 	newTotalPrice := bundle.TotalPrice - product.Price
 	newTotalPriceCustom := bundle.TotalPriceCustom - oldPrice
@@ -1857,8 +1843,7 @@ func DumpProductRepair(c *gin.Context) {
 
 	//cari bundle item terkait
 	var product models.Product
-    if err := tx.Preload("ProductOld").
-		Where("id = ? AND status != ?", item.ProductID, "dump").First(&product).Error; err != nil {
+    if err := tx.Where("id = ? AND status != ?", item.ProductID, "dump").First(&product).Error; err != nil {
         tx.Rollback()
         c.JSON(404, gin.H{"status": false, "message": "Produk item tidak ditemukan"})
         return
@@ -1872,10 +1857,7 @@ func DumpProductRepair(c *gin.Context) {
         return
     }
 
-	oldPrice := float64(0)
-	if product.ProductOld != nil {
-		oldPrice = product.ProductOld.OldPriceProduct
-	}
+	oldPrice := product.OldPriceProduct
 
 	newTotalPrice := bundle.TotalPrice - product.Price
 	newTotalPriceCustom := bundle.TotalPriceCustom - oldPrice

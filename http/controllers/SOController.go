@@ -1028,3 +1028,243 @@ func StopSoCategory(c *gin.Context) {
         "data":    activePeriod,
     })
 }
+
+/* ==================== REPAIR STATION ==================== */
+func SoProductMigrateRepair(c *gin.Context) {
+	barcode := c.Param("barcode")
+	user := c.MustGet("auth_user").(models.User) // dari middleware auth
+	
+    var product models.Product
+    err := config.DB.Table("products").
+	Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+	First(&product).Error
+	
+    if err != nil {
+        c.JSON(404, gin.H{
+            "success":  false,
+            "message": "Produk Migrate Repair tidak ditemukan dengan barcode: " + barcode,
+        })
+        return
+    }
+
+    // Cek sudah pernah SO
+    if *product.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
+        })
+        return
+    }
+
+    // ===== Cek quality migrate =====
+
+    if product.Quality != "migrate" || product.Status != "migrate" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk ini bukan Migrate Repair.",
+        })
+        return
+    }
+
+    // ===== Update SO =====
+    if err := config.DB.Model(&product).
+        Updates(map[string]interface{}{
+            "is_so":   "done",
+            "user_so": user.ID,
+        }).Error; err != nil {
+
+        c.JSON(500, gin.H{
+            "success":  false,
+            "message": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Berhasil SO: " + product.Name,
+        "data":    product,
+    })
+}
+
+func SoProductAbnormal(c *gin.Context) {
+	barcode := c.Param("barcode")
+    user := c.MustGet("auth_user").(models.User) // dari middleware auth
+
+    var product models.Product
+    err := config.DB.Table("products").
+        Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+        First(&product).Error
+
+    if err != nil {
+        c.JSON(404, gin.H{
+            "success":  false,
+            "message": "Produk Abnormal tidak ditemukan dengan barcode: " + barcode,
+        })
+        return
+    }
+
+    // Cek sudah pernah SO
+    if *product.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
+        })
+        return
+    }
+
+    // ===== Cek quality abnormal =====
+
+    if product.Quality != "abnormal" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk ini bukan Abnormal.",
+        })
+        return
+    }
+
+    // ===== Update SO =====
+    if err := config.DB.Model(&product).
+        Updates(map[string]interface{}{
+            "is_so":   "done",
+            "user_so": user.ID,
+        }).Error; err != nil {
+
+        c.JSON(500, gin.H{
+            "success":  false,
+            "message": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Berhasil SO: " + product.Name,
+        "data":    product,
+    })
+}
+
+func SoProductDamaged(c *gin.Context) {
+	barcode := c.Param("barcode")
+    user := c.MustGet("auth_user").(models.User) // dari middleware auth
+
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+	
+    var product models.Product
+    err := config.DB.Table("products").
+        Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+        First(&product).Error
+
+    if err != nil {
+        c.JSON(404, gin.H{
+            "success":  false,
+            "message": "Produk Damaged tidak ditemukan dengan barcode: " + barcode,
+        })
+        return
+    }
+
+    // Cek sudah pernah SO
+    if product.IsSo != nil && *product.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
+        })
+        return
+    }
+
+    // ===== Cek quality damaged =====
+
+    if product.Quality != "damaged" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk ini bukan Damaged.",
+        })
+        return
+    }
+
+    // ===== Update SO =====
+    if err := config.DB.Model(&product).
+        Updates(map[string]interface{}{
+            "is_so":   "done",
+            "user_so": user.ID,
+        }).Error; err != nil {
+
+        c.JSON(500, gin.H{
+            "success":  false,
+            "message": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Berhasil SO: " + product.Name,
+        "data":    product,
+    })
+}
+
+func SoProductNon(c *gin.Context) {
+	barcode := c.Param("barcode")
+    user := c.MustGet("auth_user").(models.User) // dari middleware auth
+
+    var product models.Product
+    err := config.DB.Table("products").
+        Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+        First(&product).Error
+
+    if err != nil {
+        c.JSON(404, gin.H{
+            "success":  false,
+            "message": "Produk Non tidak ditemukan dengan barcode: " + barcode,
+        })
+        return
+    }
+
+    // Cek sudah pernah SO
+    if *product.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
+        })
+        return
+    }
+
+    // ===== Cek quality non =====
+
+    if product.Quality != "non" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk ini bukan Non.",
+        })
+        return
+    }
+
+    // ===== Update SO =====
+    if err := config.DB.Model(&product).
+        Updates(map[string]interface{}{
+            "is_so":   "done",
+            "user_so": user.ID,
+        }).Error; err != nil {
+
+        c.JSON(500, gin.H{
+            "success":  false,
+            "message": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Berhasil SO: " + product.Name,
+        "data":    product,
+    })
+}
+

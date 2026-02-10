@@ -150,15 +150,15 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
         RowNum int
     }
 
-    type ParsedRow struct {
-        Old models.ProductOld
-        New models.Product
-    }
+    // type ParsedRow struct {
+    //     Old models.ProductOld
+    //     New models.Product
+    // }
 
 	numWorkers := runtime.NumCPU()
     errCh := make(chan error, 1)
 	jobs := make(chan Job, 4000)
-	results := make(chan ParsedRow, 4000)
+	results := make(chan models.Product, 4000)
 	
 	var wg sync.WaitGroup
 	for w := 0; w < numWorkers; w++ {
@@ -212,20 +212,17 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
 				var finalCatID *uint64
 				if exists { finalCatID = &catID }
 
-				// Mapping ke ProductOld
-				pOld := models.ProductOld{
-					CodeDocument:       &currentDocCode,
-					InboundType:        "bulking",
+				// Mapping ke Product
+				location := "staging"
+				pNew := models.Product{
+					CodeDocument:  &currentDocCode,
+					InboundType:        "bulking-category",
 					OldBarcodeProduct:  &row[0],
 					OldNameProduct:     normalize(row[1]),
 					OldQuantityProduct: qty,
 					OldPriceProduct:    oldPrice,
-				}
-
-				// Mapping ke Product (ID Relasi akan diisi saat insert)
-				location := "staging"
-				pNew := models.Product{
-					CodeDocument:  &currentDocCode,
+					ActualOldPrice:   oldPrice,
+					ActualQuality:    "lolos",
 					Barcode:       row[0],
 					Name:          normalize(row[1]),
 					Quantity:      int64(qty),
@@ -238,10 +235,7 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
 					WarehouseType: "type1",
 				}
 
-				results <- struct {
-					Old models.ProductOld
-					New models.Product
-				}{pOld, pNew}
+				results <- pNew
 			}
 		}()
 	}
@@ -262,7 +256,7 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
         close(errCh)
 	}()
 
-    var parsed []ParsedRow
+    var parsed []models.Product
 	for r := range results {
 		parsed = append(parsed, r)
 	}
@@ -280,53 +274,7 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
 		var totalOldPrice float64
 		const chunkSize = 500
 
-        //push data product old
-        for i := 0; i < len(parsed); i += chunkSize {
-			end := i + chunkSize
-			if end > len(parsed) {
-				end = len(parsed)
-			}
-
-			var batchOld []models.ProductOld
-			for _, p := range parsed[i:end] {
-				batchOld = append(batchOld, p.Old)
-				totalOldPrice += p.Old.OldPriceProduct
-			}
-
-			if err := tx.Create(&batchOld).Error; err != nil {
-				return err
-			}
-		}
-
-        //ambil product old id
-        var olds []models.ProductOld
-		tx.Where("code_document = ?", codeDocument).
-			Find(&olds)
-
-		oldMap := make(map[string]uint)
-		for _, o := range olds {
-			oldMap[*o.OldBarcodeProduct] = uint(o.ID)
-		}
-		
-		// push data Product
-		for i := 0; i < len(parsed); i += chunkSize {
-			end := i + chunkSize
-			if end > len(parsed) {
-				end = len(parsed)
-			}
-
-			var batchNew []models.Product
-			for _, p := range parsed[i:end] {
-				p.New.ProductOldID = uint64(oldMap[*p.Old.OldBarcodeProduct])
-				batchNew = append(batchNew, p.New)
-			}
-
-			if err := tx.Create(&batchNew).Error; err != nil {
-				return err
-			}
-		}
-
-        // Simpan Document & History
+		// Simpan Document
         totalColumn := len(headers)
 		doc := models.Document{
 			Code: codeDocument,
@@ -338,6 +286,24 @@ func processBulkingExcel(filePath string, userId uint, fileName string) (string,
 
 		if err := tx.Create(&doc).Error; err != nil {
 			return err
+		}
+		
+		// push data Product
+		for i := 0; i < len(parsed); i += chunkSize {
+			end := i + chunkSize
+			if end > len(parsed) {
+				end = len(parsed)
+			}
+
+			var batchNew []models.Product
+			for _, p := range parsed[i:end] {
+				totalOldPrice += p.OldPriceProduct
+				batchNew = append(batchNew, p)
+			}
+
+			if err := tx.Create(&batchNew).Error; err != nil {
+				return err
+			}
 		}
 
 		// Simpan History (RiwayatCheck)

@@ -813,6 +813,23 @@ func BulkyDocumentFinish(c *gin.Context) {
 
 	}
 
+	// Update rack_id product menjadi nil
+	if err := tx.Exec(`
+		UPDATE products p
+		JOIN bulky_sales bs ON bs.product_barcode = p.barcode
+		SET p.rack_id = NULL
+		WHERE bs.bulky_document_id = ?
+		AND bs.product_barcode IS NOT NULL
+	`, bulkyDocument.ID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Gagal reset rack product",
+			"error": err.Error(),
+		})
+		return
+	}
+
 	if err := tx.Commit().Error; err != nil {
         tx.Rollback()
         c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
@@ -1280,7 +1297,6 @@ func StoreBulkySale(c *gin.Context) {
 
 	isBundle = false
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Preload("ProductOld").
 		Preload("Category").
 		Where("barcode = ?", req.BarcodeProduct).
 		First(&product).Error
@@ -1334,7 +1350,7 @@ func StoreBulkySale(c *gin.Context) {
 			return
 		}
 	}else {
-		oldPrice = product.ProductOld.OldPriceProduct
+		oldPrice = product.OldPriceProduct
 		afterPrice = oldPrice - (oldPrice * bulkyDoc.DiscountBulky / 100.0)
 			
 		bulkySale.ProductBarcode = 		&req.BarcodeProduct
@@ -1350,6 +1366,16 @@ func StoreBulkySale(c *gin.Context) {
 			tx.Rollback()
 			c.JSON(500, gin.H{"success": false, "message": "Gagal update status product", "error": err.Error()})
 			return
+		}
+
+		//recalculate rack
+		if product.RackID != nil {
+			rackID := *product.RackID
+			if err := helpers.RecalculateRack(tx, rackID); err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{"success": false, "message": "Gagal update rak", "error": err.Error()})
+				return
+			}
 		}
 	}
 
@@ -1602,6 +1628,16 @@ func DeleteBulkySale(c *gin.Context) {
 			})
 			return
 		}
+
+		//recalculate rack
+		if product.RackID != nil {
+			rackID := *product.RackID
+			if err := helpers.RecalculateRack(tx, rackID); err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{"success": false, "message": "Gagal update rak", "error": err.Error()})
+				return
+			}
+		}
 	} else {
 		// kalau bukan product, cek bundle
 		var bundle models.Bundle
@@ -1784,7 +1820,7 @@ func importBulkyExcel(
 		var product models.Product
 		found := false
 
-		if err := tx.Preload("ProductOld").Preload("Category").
+		if err := tx.Preload("Category").
 			Where("barcode = ?", barcode).First(&product).Error; err == nil {
 
 			if product.Status == "sale" {
@@ -1795,6 +1831,13 @@ func importBulkyExcel(
 			bulkySales = append(bulkySales, item)
 
 			tx.Model(&product).Update("status", "sale")
+
+			if product.RackID != nil {
+				rackID := *product.RackID
+				if err := helpers.RecalculateRack(tx, rackID); err != nil {
+					return nil, fmt.Errorf("gagal update rak: %w", err)
+				}
+			}
 
 			found = true
 		} else {
@@ -1839,7 +1882,7 @@ func buildBulkySaleFromProduct(
 	doc models.BulkyDocument,
 	bagID uint64,
 ) models.BulkySale {
-	oldPrice := p.ProductOld.OldPriceProduct
+	oldPrice := p.OldPriceProduct
 	afterPrice := oldPrice - (oldPrice * doc.DiscountBulky / 100.0)
 
 	return models.BulkySale{

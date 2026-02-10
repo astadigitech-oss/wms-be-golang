@@ -166,7 +166,7 @@ func GenerateCodeDocument(db *gorm.DB) (string, error) {
 	)
 
 	now := time.Now()
-	datePart := fmt.Sprintf("%02d%02d", now.Day(), int(now.Month()))
+	datePart := fmt.Sprintf("%02d%04d", int(now.Month()), now.Year())
 
 	//ambil MAX(id)
 	// var nextID int64
@@ -490,6 +490,46 @@ func GenerateBulkyCode(tx *gorm.DB) (string, error) {
 	return code, nil
 }
 
+
+func RecalculateRack(db *gorm.DB, rackID uint64) error {
+
+	type result struct {
+		TotalData        int
+		TotalNewPrice    float64
+		TotalOldPrice    float64
+		TotalDisplayPrice float64
+	}
+
+	var res result
+
+	// ===== 1. Kalkulasi dari table products =====
+	err := db.Table("products").
+		Select(`
+			COUNT(*) as total_data,
+			COALESCE(SUM(price), 0) as total_new_price,
+			COALESCE(SUM(old_price_product), 0) as total_old_price,
+			COALESCE(SUM(display_price), 0) as total_display_price
+		`).
+		Where("rack_id = ?", rackID).
+		Where("status NOT IN ?", []string{"dump", "migrate", "scrap_qcd", "sale", "repair"}).
+		Scan(&res).Error
+
+	if err != nil {
+		return err
+	}
+
+	// ===== 2. Update ke rack =====
+	err = db.Table("racks").
+		Where("id = ?", rackID).
+		Updates(map[string]interface{}{
+			"total_data":                   res.TotalData,
+			"total_new_price_product":      res.TotalNewPrice,
+			"total_old_price_product":      res.TotalOldPrice,
+			"total_display_price_product":  res.TotalDisplayPrice,
+		}).Error
+
+	return err
+}
 
 
 // ========================= Custom Error =========================

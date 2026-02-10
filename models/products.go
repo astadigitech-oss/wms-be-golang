@@ -6,31 +6,40 @@ import (
 )
 
 type Product struct {
-	ID            uint64      `gorm:"primaryKey;autoIncrement" json:"id"`
-	CodeDocument  *string      `gorm:"size:255" json:"code_document"`
-	RackID  	  *uint64     `json:"rack_id"`
-	ProductOldID  uint64     `gorm:"uniqueIndex;not null" json:"product_old_id"`
-	Barcode       string     `gorm:"size:255;uniqueIndex;not null" json:"barcode"`
-	Name          string     `gorm:"size:255;not null" json:"name"`
-	Quantity      int64      `gorm:"not null" json:"quantity"`
-	Price         float64    `gorm:"type:decimal(18,2); not null" json:"price"`
-	Status        string     `gorm:"type:enum('display','expired','promo','bundle','repair','palet','dump','sale','migrate','bkl','scrap_qcd','slow_moving');size:50;not null" json:"status"`       // enum
-	Quality       string     `gorm:"type:enum('lolos','abnormal','damaged','non','migrate');default:'lolos';size:50;not null" json:"quality"`      // enum
-	QualityText   *string     `gorm:"type:text" json:"quality_text"`
-	CategoryID    *uint64     `gorm:"index" json:"category_id"`
-	TagColorID    *uint64     `gorm:"index" json:"tag_color_id"`
-	Discount      *float64    `gorm:"type:decimal(18,2);" json:"discount"`
-	DisplayPrice  float64    `gorm:"type:decimal(18,2);not null" json:"display_price"`
-	LocationType  *string     `gorm:"type:enum('main','staging');default:'main';size:50" json:"location_type"` // enum
-	StagingStage  *string     `gorm:"type:enum('process','approve');size:50" json:"staging_stage"` // enum
-	WarehouseType string      `gorm:"type:enum('type1', 'type2');default:'type1';size:50" json:"warehouse_type"`// enum
-	IsSo          *string     `gorm:"type:enum('check','done','lost','addition')" json:"is_so"`
-	UserSo        *uint64     `gormjson:"user_so"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	ID            		uint64      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RackID  	  		*uint64     `json:"rack_id"`
+	InboundType      	string   	`gorm:"size:20;not null" json:"inbound_type"`
+	CodeDocument  		*string     `gorm:"size:15" json:"code_document"`
+
+	OldBarcodeProduct 	*string  	`gorm:"size:50" json:"old_barcode_product"`
+	OldNameProduct   	string  	`gorm:"size:255;not null" json:"old_name_product"`
+	OldQuantityProduct 	int 		`gorm:"not null" json:"old_quantity_product"`
+	OldPriceProduct  	float64		`gorm:"type:decimal(18,2);not null" json:"old_price_product"`
+	ActualOldPrice		float64		`gorm:"type:decimal(18,2);not null" json:"actual_old_price"`
+	ActualQuality       string     	`gorm:"type:enum('lolos','abnormal','damaged','non','migrate');default:'lolos';size:10;not null" json:"actual_quality"` 
+
+	Barcode       		string     	`gorm:"size:50;unique;not null" json:"barcode"`
+	Name          		string     	`gorm:"size:255;not null" json:"name"`
+	Quantity      		int64      	`gorm:"not null" json:"quantity"`
+	Price         		float64    	`gorm:"type:decimal(18,2); not null" json:"price"`
+	Status        		string     	`gorm:"type:enum('display','expired','promo','bundle','repair','palet','dump','sale','migrate','bkl','scrap_qcd','slow_moving');size:15;not null" json:"status"`       // enum
+	Quality       		string     	`gorm:"type:enum('lolos','abnormal','damaged','non','migrate');default:'lolos';size:10;not null" json:"quality"`      // enum
+	QualityText   		*string     `gorm:"type:text" json:"quality_text"`
+	CategoryID    		*uint64     `gorm:"index" json:"category_id"`
+	TagColorID    		*uint64     `gorm:"index" json:"tag_color_id"`
+	Discount      		*float64    `gorm:"type:decimal(18,2);" json:"discount"`
+	DisplayPrice  		float64    	`gorm:"type:decimal(18,2);not null" json:"display_price"`
+	LocationType  		*string     `gorm:"type:enum('main','staging');size:7" json:"location_type"` // enum
+	StagingStage  		*string     `gorm:"type:enum('process','approve');size:7" json:"staging_stage"` // enum
+	WarehouseType 		string      `gorm:"type:enum('type1', 'type2');default:'type1';size:5" json:"warehouse_type"`// enum
+	IsSo          		*string     `gorm:"type:enum('check','done','lost','addition');size:8" json:"is_so"`
+	UserSo        		*uint64     `gormjson:"user_so"`
+	
+	CreatedAt     		time.Time   `json:"created_at"`
+	UpdatedAt     		time.Time   `json:"updated_at"`
 
 	// Relations
-	ProductOld   *ProductOld    `gorm:"foreignKey:ProductOldID;references:ID" json:"data_old,omitempty"`
+	Document	*Document `gorm:"foreignKey:CodeDocument;references:Code" json:"document,omitempty"`
 	Category   *Category   `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
 	ColorTag   *ColorTag   `gorm:"foreignKey:TagColorID" json:"color_tag,omitempty"`
 	BundleItems []BundleItem `gorm:"foreignKey:ProductID" json:"bundle_items,omitempty"`

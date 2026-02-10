@@ -140,10 +140,9 @@ func ProductBySourceRack(c *gin.Context) {
 			products.id AS id,
 			products.name AS product_name,
 			products.barcode AS product_barcode,
-			product_olds.old_barcode_product AS product_old_barcode,
+			products.old_barcode_product AS product_old_barcode,
 			categories.name_category AS category_name
 		`).
-		Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
 		Joins("LEFT JOIN categories ON categories.id = products.category_id").
 		Where("products.tag_color_id IS NULL").
 		Where("products.category_id IS NOT NULL").
@@ -196,7 +195,7 @@ func ProductBySourceRack(c *gin.Context) {
 		searchPattern := "%" + q + "%"
 		baseQuery = baseQuery.Where("(products.name LIKE ? OR "+
             "products.barcode LIKE ? OR " + 
-            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.old_barcode_product LIKE ? OR " + 
 			"categories.name_category LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
 	}
 
@@ -495,10 +494,9 @@ func AddProductToRack(c *gin.Context) {
 		}
 	}()
 
-	// Cari Produk & Join ke Category + ProductOld
+	// Cari Produk & Join ke Category
 	var product models.Product
-	query := tx.Preload("Category").Preload("ProductOld").
-		Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id")
+	query := tx.Preload("Category")
 
 	// Filter berdasarkan source (staging vs display)
 	locationType := "main"
@@ -506,8 +504,8 @@ func AddProductToRack(c *gin.Context) {
 		locationType = "staging"
 	}
 
-	if err := query.Where("products.location_type = ?", locationType).
-		Where("(products.barcode = ? OR product_olds.old_barcode_product = ?)", barcode, barcode).
+	if err := query.Where("location_type = ?", locationType).
+		Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
 		First(&product).Error; err != nil {
 
 		tx.Rollback()
@@ -572,7 +570,7 @@ func AddProductToRack(c *gin.Context) {
 	if err := tx.Model(&rack).Updates(map[string]interface{}{
 		"total_data":                    gorm.Expr("total_data + ?", 1),
 		"total_new_price_product":      gorm.Expr("total_new_price_product + ?", product.Price),
-		"total_old_price_product":      gorm.Expr("total_old_price_product + ?", product.ProductOld.OldPriceProduct),
+		"total_old_price_product":      gorm.Expr("total_old_price_product + ?", product.OldPriceProduct),
 		"total_display_price_product":  gorm.Expr("total_display_price_product + ?", product.DisplayPrice),
 	}).Error; err != nil {
 		tx.Rollback()
@@ -624,10 +622,9 @@ func RemoveProductFromRack(c *gin.Context) {
 		}
 	}()
 
-	// Cari Produk & Join ke Category + ProductOld
+	// Cari Produk
 	var product models.Product
-	query := tx.Preload("ProductOld").
-		Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id")
+	query := tx.Where("id = ?", productID).Where("rack_id = ?", rack.ID)
 
 	// Filter berdasarkan source (staging vs display)
 	locationType := "main"
@@ -635,11 +632,7 @@ func RemoveProductFromRack(c *gin.Context) {
 		locationType = "staging"
 	}
 
-	if err := query.Where("products.location_type = ?", locationType).
-		Where("products.id = ?", productID).
-		Where("products.rack_id = ?", rack.ID).
-		First(&product).Error; err != nil {
-			
+	if err := query.Where("location_type = ?", locationType).First(&product).Error; err != nil {
 		tx.Rollback()
 		c.JSON(404, gin.H{"status": false, "message": "Produk tidak ditemukan di rack ini: " + rack.Name})
 		return
@@ -654,10 +647,7 @@ func RemoveProductFromRack(c *gin.Context) {
         return
     }
 
-	oldPrice := float64(0)
-	if product.ProductOld != nil {
-		oldPrice = product.ProductOld.OldPriceProduct
-	}
+	oldPrice := product.OldPriceProduct
 
 	//update rack
 	if err := tx.Model(&rack).Updates(map[string]interface{}{

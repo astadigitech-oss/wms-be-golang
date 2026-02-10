@@ -601,7 +601,6 @@ func AddProductToSaleDocument(c *gin.Context) {
 	}
 
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Preload("ProductOld").
 		Preload("Category").
 		Where("barcode = ?", req.SaleBarcode).
 		First(&product).Error
@@ -685,7 +684,7 @@ func AddProductToSaleDocument(c *gin.Context) {
 		productQuantity = product.Quantity
 
 		itemStatusBefore = product.Status
-		oldPrice = product.ProductOld.OldPriceProduct
+		oldPrice = product.OldPriceProduct
 		basePrice = product.DisplayPrice
 		newPrice = product.Price
 		barcodeItem = product.Barcode
@@ -695,12 +694,12 @@ func AddProductToSaleDocument(c *gin.Context) {
 			discount = *product.Discount
 		}
 
-		category_discount := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
+		category_discount := product.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
 		category_discount = math.Round(category_discount)
 		if category_discount > product.Category.MaxPriceCategory {
 			category_discount = product.Category.MaxPriceCategory
-		} 
-		expectedPrice := product.ProductOld.OldPriceProduct - category_discount
+		}
+		expectedPrice := product.OldPriceProduct - category_discount
 
 		if product.Price != expectedPrice {
 			tx.Rollback()
@@ -1155,7 +1154,6 @@ func StoreProductToSale(c *gin.Context) {
 
 	isBundle = false
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Preload("ProductOld").
 		Preload("Category").
 		Where("barcode = ?", req.SaleBarcode).
 		First(&product).Error
@@ -1272,7 +1270,7 @@ func StoreProductToSale(c *gin.Context) {
 		productQuantity = product.Quantity
 
 		itemStatusBefore = product.Status
-		oldPrice = product.ProductOld.OldPriceProduct
+		oldPrice = product.OldPriceProduct
 		basePrice = product.DisplayPrice
 		newPrice = product.Price
 		barcodeItem = product.Barcode
@@ -1282,12 +1280,12 @@ func StoreProductToSale(c *gin.Context) {
 			discount = *product.Discount
 		}
 
-		category_discount := product.ProductOld.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
+		category_discount := product.OldPriceProduct * (float64(product.Category.DiscountCategory)/100.0)
 		category_discount = math.Round(category_discount)
 		if category_discount > product.Category.MaxPriceCategory {
 			category_discount = product.Category.MaxPriceCategory
-		} 
-		expectedPrice := product.ProductOld.OldPriceProduct - category_discount
+		}
+		expectedPrice := product.OldPriceProduct - category_discount
 
 		if product.Price != expectedPrice {
 			tx.Rollback()
@@ -1760,12 +1758,22 @@ func SaleFinish(c *gin.Context) {
 	// ===========================
 	var sales []models.Sale
 	if err := tx.
+		Preload("Product").
 		Where("sale_document_id = ?", saleDocument.ID).
 		Find(&sales).Error; err != nil || len(sales) == 0 {
 
 		tx.Rollback()
 		c.JSON(400, gin.H{"success": false, "message": "Tidak ada produk dalam sale"})
 		return
+	}
+
+	//kumpulkan rack id
+	affectedRacks := make(map[uint64]bool)
+	for _, s := range sales {
+		// hanya sale yang punya product (bukan bundle)
+		if s.Product != nil && s.Product.RackID != nil {
+			affectedRacks[*s.Product.RackID] = true
+		}
 	}
 
 	// ===========================
@@ -1830,9 +1838,8 @@ func SaleFinish(c *gin.Context) {
 
 	tx.Model(&models.Sale{}).
 		Joins("JOIN products ON products.barcode = sales.barcode_item").
-		Joins("JOIN product_olds ON product_olds.product_id = products.id").
 		Where("sales.sale_document_id = ?", saleDocument.ID).
-		Select("COALESCE(SUM(product_olds.old_price_product), 0)").
+		Select("COALESCE(SUM(products.old_price_product), 0)").
 		Scan(&totalOldProduct)
 
 	tx.Model(&models.Sale{}).
@@ -1981,6 +1988,22 @@ func SaleFinish(c *gin.Context) {
 
 		return
 	}
+
+	// ===========================
+	// RECALCULATE RACK
+	// ===========================
+	for rackID := range affectedRacks {
+		if err := helpers.RecalculateRack(tx, rackID); err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Gagal update data rack",
+				"error":   err.Error(),
+			})
+			return
+		}
+	}
+
 	// ===========================
 	// COMMIT
 	// ===========================

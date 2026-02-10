@@ -189,18 +189,31 @@ func RouteHandler(r *gin.Engine) {
 			rg.PUT("/migrate-repair-docs/items/:item_id/update", controllers.MigrateProductUpdate) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/to-display", controllers.MigrateProductToDisplay) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/status-dump", controllers.MigrateProductToDump) //DocumentController.go
+			rg.POST("/migrate-products/:barcode/so", controllers.SoProductMigrateRepair) //SOController.go
 		})
 
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Reparasi"}, func(rg *gin.RouterGroup) {
 			//Abnormal
 			rg.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
 			rg.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
+			rg.POST("/products/abnormal/:barcode/so", controllers.SoProductAbnormal) //SOController.go
 			//Damaged
-			rg.GET("/products/damaged", controllers.GetProductDamaged) //ProductController.go
-			rg.PUT("/products/damaged/:product_id/to-display", controllers.DamagedToDisplay) //ProductController.go
+			rg.GET("/products/damaged", controllers.GetProductDamageds) //ProductController.go
+			rg.POST("/products/damaged/:barcode/so", controllers.SoProductDamaged) //SOController.go
 			//Non
 			rg.GET("/products/non", controllers.GetProductNon) //ProductController.go
+			rg.POST("/products/non/:barcode/so", controllers.SoProductNon) //SOController.go
 			rg.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
+
+			//RepairDocument (route for document damaged & non)
+			rg.GET("/repair/:type/documents/", controllers.GetRepairDocuments) //ProductController.go
+			rg.GET("repair/:type/documents/:doc_id", controllers.DetailRepairDocuments) //ProductController.go
+			rg.GET("repair/:type/document/active-session", controllers.GetActiveSessionRepairDoc) //ProductController.go
+			rg.POST("repair/document/repair-all", controllers.AddAllProductToRepairDocument) //ProductController.go
+			rg.POST("repair/document/product", controllers.AddProductToRepairDocument) //ProductController.go
+			rg.POST("repair/:type/document/:doc_id/lock", controllers.LockRepairDocument) //ProductController.go
+			rg.POST("repair/:type/document/:doc_id/finish", controllers.FinishRepairDocument) //ProductController.go
+			rg.DELETE("repair/document/product", controllers.RemoveProductRepairDocument) //ProductController.go
 		})
 
 		/* ==================== OUTBOUND ==================== */
@@ -285,7 +298,6 @@ func RouteHandler(r *gin.Engine) {
 		})
 
 		/* ==================== GENERALE ==================== */
-		//Account Setting
 		protected.GET("/product-price-colors", controllers.GetColorTagByPrice) //ColorTagController.go
 	}
 }

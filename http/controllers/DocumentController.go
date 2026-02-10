@@ -109,13 +109,6 @@ func DetailDocument(c *gin.Context) {
 	var total int64
 
 	db := config.DB.Model(&models.ProductOld{}).
-		Where(`
-			NOT EXISTS (
-				SELECT 1 
-				FROM products 
-				WHERE products.product_old_id = product_olds.id
-			)
-		`).
 		Where("product_olds.code_document = ?", code_document)
 		
 	if query != "" {
@@ -200,13 +193,6 @@ func SearchProductOld(c *gin.Context)  {
 
 	// Query ProductOld
 	err := config.DB.Where("code_document = ?", code_document).
-		Where(`
-			NOT EXISTS (
-				SELECT 1 
-				FROM products 
-				WHERE products.product_old_id = product_olds.id
-			)
-		`).
 		Where("old_barcode_product = ?", barcode).First(&productOld).Error
 
 	if err != nil {
@@ -465,16 +451,11 @@ func DestroyDocument(c *gin.Context) {
     deleteUnusedProductOld := `
         DELETE FROM product_olds
         WHERE code_document = ?
-        AND id NOT IN (
-            SELECT DISTINCT product_old_id 
-            FROM products 
-            WHERE product_old_id IS NOT NULL
-        )
     `
 
 	if err := tx.Exec(deleteUnusedProductOld, code_document).Error; err != nil {
         tx.Rollback()
-        c.JSON(500, gin.H{"status": false, "message": "Gagal hapus product_old tidak terpakai", "error": err})
+        c.JSON(500, gin.H{"status": false, "message": "Gagal hapus product_old", "error": err})
         return
     }
 
@@ -507,11 +488,6 @@ func DestroyProductOld(c *gin.Context)  {
 	query := `
         DELETE FROM product_olds
         WHERE id = ?
-        AND id NOT IN (
-            SELECT DISTINCT product_old_id 
-            FROM products 
-            WHERE product_old_id IS NOT NULL
-        )
     `
 	err := config.DB.Exec(query, id_product_old).Error
 
@@ -1183,6 +1159,7 @@ func UpdateBKL(c *gin.Context) {
 }
 
 // ===================== Migrate To Repair ====================
+// Migrate to repair
 func ListMigrateRepairDocs(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("q"))
 
@@ -1294,7 +1271,6 @@ func ListMigrateProducts(c *gin.Context) {
 	baseQuery := config.DB.Model(&models.Product{}).
         Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
         Where("products.status IN ?", []string{"display", "expired"}).
         Where("products.category_id IS NOT NULL").
         Where("products.tag_color_id IS NULL").
@@ -1305,7 +1281,7 @@ func ListMigrateProducts(c *gin.Context) {
 	if q != "" {
 		searchPattern := "%" + q + "%"
 		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
-            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.old_barcode_product LIKE ? OR " + 
             "products.name LIKE ?)", searchPattern, searchPattern, searchPattern)
 	}
 
@@ -1330,11 +1306,11 @@ func ListMigrateProducts(c *gin.Context) {
     err := baseQuery.Session(&gorm.Session{}).
         Select(`
             products.id, 
-            product_olds.old_barcode_product AS old_barcode, 
+            products.old_barcode_product AS old_barcode, 
             products.barcode AS new_barcode, 
             products.name AS name, 
             products.price AS price, 
-            product_olds.old_price_product AS old_price, 
+            products.old_price_product AS old_price, 
             products.status AS status, 
             COALESCE(color_tags.name_color, categories.name_category) AS category
         `).
@@ -1439,7 +1415,7 @@ func AddMigrateProduct(c *gin.Context) {
 	}()
 
 	var product models.Product
-	if err := tx.Preload("Category").Preload("ProductOld").
+	if err := tx.Preload("Category").
 		Where("category_id IS NOT NULL").
 		Where("barcode = ?", payload.Barcode).
 		Where("quality = ?", "lolos").
@@ -1556,7 +1532,7 @@ func AddMigrateProduct(c *gin.Context) {
 		result := tx.Model(&models.Rack{}).Where("id = ?", rackID).Updates(map[string]interface{}{
 			"total_data":                    gorm.Expr("total_data - ?", 1),
 			"total_new_price_product":      gorm.Expr("total_new_price_product - ?", product.Price),
-			"total_old_price_product":      gorm.Expr("total_old_price_product - ?", product.ProductOld.OldPriceProduct),
+			"total_old_price_product":      gorm.Expr("total_old_price_product - ?", product.OldPriceProduct),
 			"total_display_price_product":  gorm.Expr("total_display_price_product - ?", product.DisplayPrice),
 		})
 
@@ -1744,7 +1720,7 @@ func MigrateProductUpdate(c *gin.Context) {
 
 	//load data product
 	var product models.Product
-	if err := tx.Preload("ProductOld").First(&product, repair_item.ProductID).Error; err != nil {
+	if err := tx.First(&product, repair_item.ProductID).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{"success":false, "message": "data product tidak ditemukan pada item ini"})
@@ -1797,7 +1773,7 @@ func MigrateProductUpdate(c *gin.Context) {
 		"before_edit": map[string]interface{}{
 			"name_product": product.Name,
 			"price_product": product.Price,
-			"old_price_product": product.ProductOld.OldPriceProduct,
+			"old_price_product": product.OldPriceProduct,
 			"category_id": product.CategoryID,
 		},
 		"after_edit": map[string]interface{}{
@@ -1814,13 +1790,13 @@ func MigrateProductUpdate(c *gin.Context) {
         return
     }
 
-    if err := tx.Model(&models.ProductOld{}).
-        Where("id = ?", product.ProductOldID).
-        Update("old_price_product", payload.OldPriceProduct).Error; err != nil {
-        tx.Rollback()
-        c.JSON(500, gin.H{"status": false, "message": "Gagal update data product old", "error": err.Error()})
-        return
-    }
+    // if err := tx.Model(&models.ProductOld{}).
+    //     Where("id = ?", product.ProductOldID).
+    //     Update("old_price_product", payload.OldPriceProduct).Error; err != nil {
+    //     tx.Rollback()
+    //     c.JSON(500, gin.H{"status": false, "message": "Gagal update data product old", "error": err.Error()})
+    //     return
+    // }
 
 	if err := helpers.LogUserAction(user.ID, user.Name, fmt.Sprintf("Update data product (%s)", product.Barcode), "migrate-to-repair/product/update", metadata); err != nil {
 		tx.Rollback()
@@ -2006,7 +1982,6 @@ func MigrateProductToDump(c *gin.Context) {
     })
 
 }
-
 // ===================== OUTBOUND ====================
 // QCD -> scrap
 func GetScrapDocuments(c *gin.Context) {
@@ -2019,23 +1994,34 @@ func GetScrapDocuments(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	offset := (page - 1) * limit
 
-	var results []models.ScrapDocument
+	type scrapDocumentResponse struct {
+        ID            uint64    `json:"id"`
+        CodeDocument  string    `json:"code_document"`
+        Status        string    `json:"status"`
+        TotalProduct  int64     `json:"total_product"`
+        TotalNewPrice int64     `json:"total_new_price"`
+        TotalOldPrice int64     `json:"total_old_price"`
+        CreatedAt     time.Time `json:"created_at"`
+        UserID       uint64    `json:"user_id"`
+        UserName     string    `json:"user_name"`
+    }
+
+	var results []scrapDocumentResponse
 	var total int64
 
 	baseQuery := db.Table("scrap_documents sd").
 		Select(`
-			sd.id,
-			sd.code_document,
-			sd.status,
-			sd.total_product,
-			sd.total_new_price,
-			sd.total_old_price,
-			sd.created_at,
+			sd.id AS id,
+			sd.code_document AS code_document,
+			sd.status AS status,
+			sd.total_product AS total_product,
+			sd.total_new_price AS total_new_price,
+			sd.total_old_price AS total_old_price,
+			sd.created_at AS created_at,
 			u.id   AS user_id,
 			u.name AS user_name
 		`).
-		Joins("LEFT JOIN users u ON u.id = sd.user_id").
-		Joins("LEFT JOIN scrap_items si ON si.scrap_document_id = sd.id")
+		Joins("LEFT JOIN users u ON u.id = sd.user_id")
 
 	// ===== Filter q =====
 	if q != "" {
@@ -2045,9 +2031,11 @@ func GetScrapDocuments(c *gin.Context) {
 			sd.code_document_scrap LIKE ?
 			OR u.name LIKE ?
 			OR EXISTS (
-				SELECT 1 FROM products p
-				WHERE p.id = si.product_id
-				AND (p.barcode LIKE ?)
+				SELECT 1
+				FROM scrap_items si
+                JOIN products p ON p.id = si.product_id
+                WHERE si.scrap_document_id = sd.id
+                AND p.barcode LIKE ?
 			)
 		`,
 			like, like, like,
@@ -2115,14 +2103,13 @@ func GetProductDumps(c *gin.Context) {
 	baseQuery := config.DB.Model(&models.Product{}).
         Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
         Where("products.status = ?", "dump")
 
 	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {
 		searchPattern := "%" + q + "%"
 		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
-            "product_olds.old_barcode_product LIKE ? OR " + 
+            "products.old_barcode_product LIKE ? OR " + 
             "products.name LIKE ? OR " + 
             "color_tags.name_color LIKE ? OR " + 
             "categories.name_category LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
@@ -2150,11 +2137,11 @@ func GetProductDumps(c *gin.Context) {
     err := baseQuery.Session(&gorm.Session{}).
         Select(`
             products.id, 
-            product_olds.old_barcode_product AS old_barcode, 
+            products.old_barcode_product AS old_barcode, 
             products.barcode AS new_barcode, 
             products.name AS name, 
             products.price AS price, 
-            product_olds.old_price_product AS old_price, 
+            products.old_price_product AS old_price, 
             products.status AS status, 
 			CASE 
                 WHEN products.quality = 'migrate' THEN 'migrate'
@@ -2256,7 +2243,7 @@ func DetailScrapDocuments(c *gin.Context) {
             products.name AS name_product, 
             products.barcode AS barcode, 
             products.price AS new_price, 
-            product_olds.old_price_product AS old_price, 
+            products.old_price_product AS old_price, 
             products.status AS status, 
 			CASE 
                 WHEN products.quality = 'migrate' THEN 'migrate'
@@ -2270,10 +2257,9 @@ func DetailScrapDocuments(c *gin.Context) {
 		Joins("JOIN products ON products.id = scrap_items.product_id").
 		Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
 		Where("scrap_items.scrap_document_id = ?", doc.ID)
 	
-	if q != "nil" {
+	if q != "" {
 		keyword := "%" + q + "%"
 		baseQuery = baseQuery.Where("(products.name LIKE ? OR products.barcode LIKE ?)", keyword, keyword)
 	}
@@ -2418,7 +2404,7 @@ func GetActiveSession(c *gin.Context) {
             products.name AS name_product, 
             products.barcode AS barcode, 
             products.price AS new_price, 
-            product_olds.old_price_product AS old_price, 
+            products.old_price_product AS old_price, 
             products.status AS status, 
 			CASE 
                 WHEN products.quality = 'migrate' THEN 'migrate'
@@ -2432,7 +2418,6 @@ func GetActiveSession(c *gin.Context) {
 		Joins("JOIN products ON products.id = scrap_items.product_id").
 		Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Joins("LEFT JOIN product_olds ON product_olds.id = products.product_old_id").
 		Where("scrap_items.scrap_document_id = ?", doc.ID)
 
 	baseQuery.Session(&gorm.Session{}).Count(&total)
@@ -2510,8 +2495,7 @@ func AddProductToScrap(c *gin.Context) {
 
 	// Ambil Produk
 	var product models.Product
-	if err := tx.Preload("ProductOld").
-		Where("barcode = ?", barcode).
+	if err := tx.Where("barcode = ?", barcode).
 		First(&product).Error; err != nil {
 
 		tx.Rollback()
@@ -2566,7 +2550,7 @@ func AddProductToScrap(c *gin.Context) {
 	result := tx.Model(&doc).Updates(map[string]interface{}{
 		"total_product":                    gorm.Expr("total_product + 1"),
 		"total_new_price":      gorm.Expr("total_new_price + ?", product.Price),
-		"total_old_price":      gorm.Expr("total_old_price + ?", product.ProductOld.OldPriceProduct),
+		"total_old_price":      gorm.Expr("total_old_price + ?", product.OldPriceProduct),
 	})
 
 	if result.RowsAffected == 0 {
@@ -2715,10 +2699,9 @@ func AddAllProductToScrap(c *gin.Context) {
 		SELECT
 			COUNT(*) as total_product,
 			SUM(p.price) as total_new_price,
-			SUM(po.old_price_product) as total_old_price
+			SUM(p.old_price_product) as total_old_price
 		FROM scrap_items si
 		JOIN products p ON p.id = si.product_id
-		JOIN product_olds po ON po.id = p.product_old_id
 		WHERE si.scrap_document_id = ?
 	`, doc.ID).Scan(&totals).Error
 
