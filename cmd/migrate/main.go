@@ -79,6 +79,7 @@ var Tables = []interface{}{
 	&models.MigrateColorDestination{},
 	&models.RepairDocument{},
 	&models.RepairDocumentItem{},
+	&models.DailyInventorySnapshot{},
 }
 
 
