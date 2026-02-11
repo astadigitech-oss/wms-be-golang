@@ -276,17 +276,42 @@ func GetColorTagByPrice(c *gin.Context) {
         return
     }
 
-	var colors []models.ColorTag
-	if err := config.DB.Where("min_price_color <= ?", price).
-		Where("max_price_color >= ?", price).
-		Find(&colors).Error; err != nil {
-		c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil data tag color", "error": err.Error()})
+	if price >= 100000 {
+		var categories []models.Category
+
+		// Query Category
+		config.DB.Model(&models.Category{}).Find(&categories)
+
+		// Response
+		c.JSON(200, gin.H{
+			"success": true,
+			"message": "Data categories",
+			"resource": gin.H{
+				"category": categories,
+				"warna": nil,
+			},
+		})
+
+		return
+	}else {
+		var colors []models.ColorTag
+		if err := config.DB.Where("min_price_color <= ?", price).
+			Where("max_price_color >= ?", price).
+			Find(&colors).Error; err != nil {
+			c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil data tag color", "error": err.Error()})
+			return
+		}
+	
+		c.JSON(200, gin.H{
+			"success": true,
+			"message": "List data color",
+			"resource": gin.H{
+				"category": nil,
+				"warna": colors,
+			},	
+		})
+
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"success": true,
-		"message": "List data color",
-		"resource": colors,	
-	})
 }
