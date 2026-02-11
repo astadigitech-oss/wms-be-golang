@@ -1,12 +1,14 @@
 package controllers
 
 import (
+	"errors"
 	"fmt"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	// "strings"
@@ -14,6 +16,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"gorm.io/gorm"
 	// "github.com/go-playground/validator/v10"
 )
@@ -39,12 +42,12 @@ func GetBuyers(c *gin.Context) {
 		Preload("Rank")
 
 	if q != "" {
-		baseQuery = baseQuery.Where(`
+		baseQuery = baseQuery.Where(`(
 			name_buyer LIKE ?
 			OR phone_buyer LIKE ?
 			OR address_buyer LIKE ?
 			OR type_buyer LIKE ?
-		`,
+		)`,
 			"%"+q+"%",
 			"%"+q+"%",
 			"%"+q+"%",
@@ -139,6 +142,306 @@ func GetBuyers(c *gin.Context) {
 	})
 }
 
+func DetailBuyer(c *gin.Context) {
+	q := c.Query("q")
+	buyer_id := c.Param("buyer_id")
+
+	limit := 20
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	offset := (page - 1) * limit
+
+	db := config.DB
+
+	var buyer models.Buyer
+	if err := db.Preload("Rank").Where("id = ?", buyer_id).First(&buyer).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"success": false, "message": "data buyer tidak ditemukan"})
+		}else {
+			c.JSON(500, gin.H{"success": false, "message": "gagal ambil data buyer", "error": err.Error()})
+		}
+
+		return
+	}
+
+	// BASE QUERY BUYER
+	baseQuery := db.Model(&models.SaleDocument{}).Where("buyer_id = ?", buyer.ID)
+
+	if q != "" {
+		baseQuery = baseQuery.Where(`(
+			code_document_sale LIKE ?
+		)`,
+			"%"+q+"%",
+		)
+	}
+
+	// COUNT TOTAL DATA
+	var total int64
+	if err := baseQuery.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "gagal hitung total sale document", "error": err.Error()})
+		return
+	}
+
+	// AMBIL BUYER + MONTHLY POINT
+	type saleRow struct {
+		ID	uint64 `json:"id"`
+		CodeDocumentSale	string `json:"code_document_sale"`
+		BuyerID uint64 `json:"buyer_id"`
+		TotalProduct uint64 `json:"total_product"`
+		TotalPrice float64 `json:"total_price"`
+		PriceAfterTax float64 `json:"price_after_tax"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	var buyer_sale_document []saleRow
+
+	if err := baseQuery.
+		Select(`
+			id,
+			code_document_sale,
+			buyer_id,
+			total_product,
+			total_price,
+			price_after_tax,
+			created_at
+		`).Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&buyer_sale_document).Error; err != nil {
+
+		c.JSON(500, gin.H{"success": false, "message": "gagal ambil data sale document", "error": err.Error()})
+		return
+	}
+
+	// PAGINATION META
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	// RESPONSE
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Data Buyer",
+		"resource": gin.H{
+			"buyer": buyer,			
+			"document": gin.H{
+				"current_page": page,
+				"per_page":     limit,
+				"total":        total,
+				"last_page":    lastPage,
+				"data":         buyer_sale_document,
+				"links":        links,
+			},
+		},
+	})
+}
+
+func StoreBuyer(c *gin.Context) {
+	type payloadRequest struct {
+		NameBuyer    string  `json:"name_buyer" binding:"required"`
+		PhoneBuyer   string  `json:"phone_buyer" binding:"required,numeric"`
+		AddressBuyer string  `json:"address_buyer" binding:"required"`
+		Email        *string `json:"email" binding:"omitempty,email"`
+	}
+
+	var req payloadRequest
+
+    // ========== VALIDASI ==========
+    if err := c.ShouldBindJSON(&req); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errorsMap := make(map[string]string)
+
+		for _, e := range ve {
+			field := e.Field()
+
+			switch field {
+			case "NameBuyer":
+				errorsMap["name_buyer"] = "Nama buyer wajib diisi"
+			case "PhoneBuyer":
+				errorsMap["phone_buyer"] = "Nomor telepon wajib diisi"
+			case "AddressBuyer":
+				errorsMap["address_buyer"] = "Alamat wajib diisi"
+			case "Email":
+				errorsMap["email"] = "Email tidak valid"
+
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
+
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+    // ========== CEK UNIQUE EMAIL ==========
+    if req.Email != nil {
+
+        var count int64
+        config.DB.Model(&models.Buyer{}).
+            Where("email = ?", *req.Email).
+            Count(&count)
+
+        if count > 0 {
+            c.JSON(422, gin.H{
+                "success": false,
+                "message": "Input tidak valid!",
+                "errors": gin.H{
+                    "email": "Email sudah digunakan",
+                },
+            })
+            return
+        }
+    }
+
+    // ========== CREATE ==========
+    buyer := models.Buyer{
+        NameBuyer:              req.NameBuyer,
+        PhoneBuyer:             req.PhoneBuyer,
+        AddressBuyer:           req.AddressBuyer,
+        TypeBuyer:              "Biasa",
+        AmountTransactionBuyer: 0,
+        AmountPurchaseBuyer:    0,
+        AvgPurchaseBuyer:       0,
+        Email:                  req.Email,
+    }
+
+    if err := config.DB.Create(&buyer).Error; err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Data gagal ditambahkan!",
+            "errors":  err.Error(),
+        })
+        return
+    }
+
+    // ========== RESPONSE ==========
+    c.JSON(200, gin.H{
+        "success": true,
+        "message": "Data berhasil ditambahkan!",
+        "data":    buyer,
+    })
+}
+
+func UpdateBuyer(c *gin.Context) {
+	buyer_id := c.Param("buyer_id")
+
+	var buyer models.Buyer
+	if err := config.DB.First(&buyer, buyer_id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"success": false, "message": "data buyer tidak ditemukan"})
+		}else {
+			c.JSON(500, gin.H{"success": false, "message": "gagal ambil data buyer", "error": err.Error()})
+		}
+
+		return	
+	}
+
+	type payloadRequest struct {
+		NameBuyer    string  `json:"name_buyer" binding:"required"`
+		PhoneBuyer   string  `json:"phone_buyer" binding:"required,numeric"`
+		AddressBuyer string  `json:"address_buyer" binding:"required"`
+		Email        *string `json:"email" binding:"omitempty,email"`
+	}
+
+	var req payloadRequest
+
+    // ========== VALIDASI ==========
+    if err := c.ShouldBindJSON(&req); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errorsMap := make(map[string]string)
+
+		for _, e := range ve {
+			field := e.Field()
+
+			switch field {
+			case "NameBuyer":
+				errorsMap["name_buyer"] = "Nama buyer wajib diisi"
+			case "PhoneBuyer":
+				errorsMap["phone_buyer"] = "Nomor telepon wajib diisi"
+			case "AddressBuyer":
+				errorsMap["address_buyer"] = "Alamat wajib diisi"
+			case "Email":
+				errorsMap["email"] = "Email tidak valid"
+
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
+
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+    // ========== CEK UNIQUE EMAIL ==========
+    if req.Email != nil && buyer.Email != req.Email {
+        var count int64
+        config.DB.Model(&models.Buyer{}).
+            Where("id != ? AND email = ?", buyer.ID, *req.Email).
+            Count(&count)
+
+        if count > 0 {
+            c.JSON(422, gin.H{
+                "success": false,
+                "message": "Input tidak valid!",
+                "errors": gin.H{
+                    "email": "Email sudah digunakan",
+                },
+            })
+            return
+        }
+    }
+
+    // ========== Update buyer ==========
+	updateData := map[string]interface{}{
+		"name_buyer": req.NameBuyer,
+		"phone_buyer": req.PhoneBuyer,
+		"address_buyer": req.AddressBuyer,
+		"email": *req.Email,
+	}
+
+    if err := config.DB.Model(&buyer).Updates(updateData).Error; err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Data gagal diubah!",
+            "errors":  err.Error(),
+        })
+        return
+    }
+
+    // ========== RESPONSE ==========
+    c.JSON(200, gin.H{
+        "success": true,
+        "message": "Data berhasil diubah!",
+        "data":    buyer,
+    })
+}
+
 //buyer
 func GetBuyerSummary(c *gin.Context) {
 	defer func() {
@@ -173,9 +476,9 @@ func GetBuyerSummary(c *gin.Context) {
 	// ===== Total point =====
 	var totalPoints int64
 	if err := db.Model(&models.SaleDocument{}).
-		Where("status_document_sale = ?", "selesai").
+		Where("status = ?", "selesai").
 		Where("created_at >= ? AND created_at < ?", start, end).
-		Select("COALESCE(SUM(buyer_point_document_sale), 0)").
+		Select("COALESCE(SUM(buyer_point), 0)").
 		Scan(&totalPoints).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 		return
@@ -197,9 +500,9 @@ func GetBuyerSummary(c *gin.Context) {
 	// ===== Active Buyer =====
 	var activeBuyerCount int64
 	if err := db.Model(&models.SaleDocument{}).
-		Where("status_document_sale = ?", "selesai").
+		Where("status = ?", "selesai").
 		Where("created_at >= ? AND created_at < ?", start, end).
-		Distinct("buyer_id_document_sale").  //hitung jumlah buyer berbeda yang pernah belanja
+		Distinct("buyer_id").  //hitung jumlah buyer berbeda yang pernah belanja
 		Count(&activeBuyerCount).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 		return
@@ -296,8 +599,8 @@ func GetBuyerMonthlyPoints(c *gin.Context) {
 				CASE 
 					WHEN sd.created_at >= ? 
 					AND sd.created_at < ?
-					AND sd.status_document_sale = 'selesai'
-					THEN sd.buyer_point_document_sale
+					AND sd.status = 'selesai'
+					THEN sd.buyer_point
 					ELSE 0
 				END
 			), 0) AS monthly_points,
@@ -306,8 +609,8 @@ func GetBuyerMonthlyPoints(c *gin.Context) {
 				CASE 
 					WHEN sd.created_at >= ? 
 					AND sd.created_at < ?
-					AND sd.status_document_sale = 'selesai'
-					THEN sd.total_price_document_sale
+					AND sd.status = 'selesai'
+					THEN sd.total_price
 					ELSE 0
 				END
 			), 0) AS monthly_total_purchase,
@@ -316,12 +619,12 @@ func GetBuyerMonthlyPoints(c *gin.Context) {
 				DISTINCT CASE 
 					WHEN sd.created_at >= ? 
 					AND sd.created_at < ?
-					AND sd.status_document_sale = 'selesai'
+					AND sd.status = 'selesai'
 					THEN sd.id
 				END
 			) AS monthly_transaction
 		`, startDate, endDate, startDate, endDate, startDate, endDate).
-		Joins("LEFT JOIN sale_documents sd ON sd.buyer_id_document_sale = b.id").
+		Joins("LEFT JOIN sale_documents sd ON sd.buyer_id = b.id").
 		Joins("LEFT JOIN loyalty_ranks lr ON lr.id = b.loyalty_rank_id").
 		Group("b.id")
 
