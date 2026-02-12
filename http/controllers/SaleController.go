@@ -111,8 +111,8 @@ func SaleIndex(c *gin.Context) {
 	var totalDataSale int64
 
 	baseQuery := db.Model(&models.Sale{}).
-		Joins("LEFT JOIN products ON products.barcode = sales.barcode_item").
-		Joins("LEFT JOIN bundles ON bundles.barcode = sales.barcode_item").
+		Joins("LEFT JOIN products ON products.barcode = sales.product_barcode").
+		Joins("LEFT JOIN bundles ON bundles.barcode = sales.bundle_barcode").
 		Joins(`
 			LEFT JOIN categories 
 				ON categories.id = 
@@ -123,12 +123,12 @@ func SaleIndex(c *gin.Context) {
 		`).
 		Where("sales.status_sale = ? AND sales.user_id = ?", "proses", user.ID)
 
-	//hitung total sale
+	//hitung total price sale
 	if err := baseQuery.Session(&gorm.Session{}).
 		Select("COALESCE(SUM(sales.product_price_sale),0)").
 		Scan(&totalSale).Error; err != nil {
 
-		c.JSON(500, gin.H{"success": false, "message": "gagal menghitung total sale", "error": err.Error()})
+		c.JSON(500, gin.H{"success": false, "message": "gagal menghitung total price sale", "error": err.Error()})
 		return
 	}
 
@@ -141,7 +141,7 @@ func SaleIndex(c *gin.Context) {
 	if err := baseQuery.
 		Select(`
 			sales.id,
-			sales.barcode_item AS barcode,
+			COALESCE(products.barcode, bundles.barcode) AS barcode,
 			COALESCE(products.name, bundles.name_bundle) AS product_name,
 			categories.name_category AS category,
 			COALESCE(products.quantity, bundles.total_product) AS qty,

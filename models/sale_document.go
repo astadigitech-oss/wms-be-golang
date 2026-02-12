@@ -18,7 +18,7 @@ type SaleDocument struct {
 
 	TotalProduct      int64   `gorm:"not null" json:"total_product"`
 	TotalOldPrice     float64 `gorm:"type:decimal(15,2);not null" json:"total_old_price"`
-	TotalPrice        float64 `gorm:"type:decimal(15,2);not null" json:"total_price"`
+	TotalPrice        float64 `gorm:"type:decimal(15,2);not null" json:"total_price"` //total price sale
 	TotalDisplayPrice      float64 `gorm:"type:decimal(15,2);not null" json:"total_display_price"`
 
 	Status string `gorm:"type:enum('proses','selesai');not null;default:'proses'" json:"status"`
