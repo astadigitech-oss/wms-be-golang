@@ -1012,6 +1012,135 @@ func GetCurrentRankInfo(
 	}, nil
 }
 
+func CalculateCurrentBalance() (int64, float64, error) {
+    type categoryResult struct {
+        CategoryProduct    string  `gorm:"column:category_product"`
+        TotalCategory      int64   `gorm:"column:total_category"`
+        TotalPriceCategory float64 `gorm:"column:total_price_category"`
+    }
+
+    type tagResult struct {
+        TagProduct           string  `gorm:"column:tag_product"`
+        TotalTagProduct      int64   `gorm:"column:total_tag_product"`
+        TotalPriceTagProduct float64 `gorm:"column:total_price_tag_product"`
+    }
+    // =========================
+    // 1. CATEGORY MAIN PRODUCT
+    // =========================
+    var categoryMain []categoryResult
+
+    err := config.DB.Raw(`
+        SELECT 
+            c.name_category as category_product,
+            COUNT(p.id) as total_category,
+            SUM(p.price) as total_price_category
+        FROM products p
+        JOIN categories c ON c.id = p.category_id
+        WHERE p.location_type = 'main'
+        AND p.tag_color_id IS NULL
+        AND p.quality = 'lolos'
+        AND p.status IN ('display','expired','slow_moving')
+        GROUP BY c.name_category
+    `).Scan(&categoryMain).Error
+
+    if err != nil {
+        return 0, 0, fmt.Errorf("Gagal menghitung kategori main: %v", err)
+    }
+
+    // =========================
+    // 2. CATEGORY BUNDLE
+    // =========================
+    var categoryBundle []categoryResult
+
+    err = config.DB.Raw(`
+        SELECT 
+            c.name_category as category_product,
+            COUNT(b.id) as total_category,
+            SUM(b.total_price_custom) as total_price_category
+        FROM bundles b
+        JOIN categories c ON c.id = b.category_id
+        WHERE b.category_id IS NOT NULL
+        AND b.tag_color_id IS NULL
+        AND b.status NOT IN ('bundle')
+        GROUP BY c.name_category
+    `).Scan(&categoryBundle).Error
+
+    if err != nil {
+        return 0, 0, fmt.Errorf("Gagal menghitung kategori bundle: %v", err)
+    }
+
+    allCategory := append(categoryMain, categoryBundle...)
+
+    // =========================
+    // 3. TAG PRODUCT
+    // =========================
+    var tagProducts []tagResult
+
+    err = config.DB.Raw(`
+        SELECT 
+            t.name_color as tag_product,
+            COUNT(p.id) as total_tag_product,
+            SUM(p.price) as total_price_tag_product
+        FROM products p
+        JOIN color_tags t ON t.id = p.tag_color_id
+        WHERE p.tag_color_id IS NOT NULL
+        AND p.category_id IS NULL
+        AND p.quality = 'lolos'
+        AND p.status = 'display'
+        GROUP BY t.name_color
+    `).Scan(&tagProducts).Error
+
+    if err != nil {
+        return 0, 0, fmt.Errorf("Gagal menghitung product color: %v", err)
+    }
+
+    // =========================
+    // 4. STAGING PRODUCT
+    // =========================
+    var staging []categoryResult
+
+    err = config.DB.Raw(`
+        SELECT 
+            c.name_category as category_product,
+            COUNT(p.id) as total_category,
+            SUM(p.price) as total_price_category
+        FROM products p
+        JOIN categories c ON c.id = p.category_id
+        WHERE p.location_type = 'staging'
+        AND p.tag_color_id IS NULL
+        AND p.quality = 'lolos'
+        AND p.status IN ('display','expired','slow_moving')
+        GROUP BY c.name_category
+    `).Scan(&staging).Error
+
+    if err != nil {
+        return 0, 0, fmt.Errorf("Gagal menghitung staging: %v", err)
+    }
+
+    // =========================
+    // HITUNG TOTAL
+    // =========================
+    var totalAllProduct int64 = 0
+    var totalAllPrice float64 = 0
+
+    for _, c := range allCategory {
+        totalAllProduct += c.TotalCategory
+        totalAllPrice += c.TotalPriceCategory
+    }
+
+    for _, t := range tagProducts {
+        totalAllProduct += t.TotalTagProduct
+        totalAllPrice += t.TotalPriceTagProduct
+    }
+
+    for _, s := range staging {
+        totalAllProduct += s.TotalCategory
+        totalAllPrice += s.TotalPriceCategory
+    }
+
+    return totalAllProduct, totalAllPrice, nil
+}
+
 
 
 

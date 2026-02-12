@@ -1,15 +1,22 @@
 package controllers
 
 import (
+	"errors"
+	"fmt"
 	"liquid8/wms/config"
-	
+	"liquid8/wms/helpers"
+	"liquid8/wms/models"
+	"os"
+	"regexp"
+
 	// "fmt"
-	"time"
 	"math"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -29,6 +36,75 @@ type colorTagAggregate struct {
 	PercentagePriceTagProduct   float64 `json:"percentage_price_tag_product"`
 }
 
+type listAnalyticSale struct {
+	ProductCategory string  `json:"product_category_sale"`
+	TotalCategory   int64   `json:"total_category"`
+	DisplayPrice    float64 `json:"display_price_sale"`
+	Purchase        float64 `json:"purchase"`
+}
+
+type monthlySummary struct {
+	TotalCategory int64   `json:"total_category"`
+	DisplayPrice  float64 `json:"display_price_sale"`
+	Purchase      float64 `json:"purchase"`
+}
+
+type annualSummary struct {
+	TotalAllCategory        int64   `json:"total_all_category"`
+	TotalDisplayPriceSale   float64 `json:"total_display_price_sale"`
+	TotalProductPriceSale   float64 `json:"total_product_price_sale"`
+}
+
+type analyticSaleMonthly struct {
+	Date            time.Time `json:"date"`
+	ProductCategory string    `json:"product_category_sale"`
+	TotalCategory   int64     `json:"total_category"`
+	DisplayPrice    float64   `json:"display_price_sale"`
+	Purchase        float64   `json:"purchase"`
+}
+
+type monthlyAnalyticSaleResponse struct {
+	Month struct {
+		CurrentMonth struct {
+			Month string `json:"month"`
+			Year  string `json:"year"`
+		} `json:"current_month"`
+
+		DateFrom *struct {
+			Date  string `json:"date"`
+			Month string `json:"month"`
+			Year  string `json:"year"`
+		} `json:"date_from"`
+
+		DateTo *struct {
+			Date  string `json:"date"`
+			Month string `json:"month"`
+			Year  string `json:"year"`
+		} `json:"date_to"`
+	} `json:"month"`
+
+	Chart       []map[string]interface{} `json:"chart"`
+	ListAnalyticSale []listAnalyticSale `json:"list_analytic_sale"`
+	MonthlySummary     monthlySummary   `json:"monthly_summary"`
+}
+
+type yearlyAnalyticSaleResponse struct {
+	Year struct {
+		CurrentYear  string `json:"current_year"`
+		PrevYear     string `json:"prev_year"`
+		SelectedYear string `json:"selected_year"`
+		NextYear     string `json:"next_year"`
+	} `json:"year"`
+
+	Chart       []map[string]interface{} `json:"chart"`
+	ListAnalyticSale []listAnalyticSale `json:"list_analytic_sale"`
+	AnnualSummary     annualSummary   `json:"annual_summary"`
+}
+
+
+
+// ===================== route handler ============================
+//storage report
 func GetStorageReport(c *gin.Context) {
 	db := config.DB
 	now := time.Now()
@@ -195,6 +271,799 @@ func GetStorageReport(c *gin.Context) {
 	})
 }
 
+//General Sale
+func GetGeneralSales(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Terjadi kesalahan internal",
+				"error":   fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		c.JSON(500, gin.H{"message": "Gagal memuat lokasi waktu", "error": fmt.Sprintf("%v", err)})
+		return
+	}
+
+	//ambil waktu sekarang
+	now := time.Now().In(loc)
+
+    fromInput := c.Query("from")
+    toInput := c.Query("to")
+
+    // ===== parsing tanggal =====
+    var fromDate, toDate time.Time
+    // var err error
+
+    if fromInput != "" {
+        fromDate, err = parseFlexibleDate(fromInput, loc)
+    	if err != nil { 
+			c.JSON(500, gin.H{"message": "Gagal memparsing tanggal", "error": fmt.Sprintf("%v", err)})
+			return
+		}
+    } else {
+        fromDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+    }
+
+    if toInput != "" {
+		toDate, err = parseFlexibleDate(toInput, loc)
+		if err != nil {
+			c.JSON(500, gin.H{"message": "Gagal memparsing tanggal", "error": fmt.Sprintf("%v", err)})
+			return
+		}
+		toDate = toDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+	} else {
+		// Mencari hari terakhir bulan ini: tgl 1 bulan berikutnya minus 1 hari
+		toDate = time.Date(now.Year(), now.Month()+1, 0, 23, 59, 59, 0, loc)
+	}
+
+	type chartItem struct {
+		Date              string  `json:"date"`
+		TotalPriceSale    float64 `json:"total_price_sale"`
+		TotalDisplayPrice float64 `json:"total_display_price"`
+	}
+
+	type documentItem struct {
+		ID                uint64  `json:"id"`
+		TotalPurchase     float64 `json:"total_purchase"`
+		TotalDisplayPrice float64 `json:"total_display_price"`
+		CodeDocument      string  `json:"code_document_sale"`
+		BuyerName         string  `json:"buyer_name_document_sale"`
+	}
+
+	type topBuyerItem struct {
+		BuyerID    uint64  `json:"buyer_id"`
+		TotalPoint float64 `json:"total_point"`
+		NameBuyer  string  `json:"name_buyer"`
+	}
+
+	type generalSaleResponse struct {
+		Month struct {
+			CurrentMonth struct {
+				Month string `json:"month"`
+				Year  string `json:"year"`
+			} `json:"current_month"`
+
+			DateFrom *struct {
+				Date  string `json:"date"`
+				Month string `json:"month"`
+				Year  string `json:"year"`
+			} `json:"date_from"`
+
+			DateTo *struct {
+				Date  string `json:"date"`
+				Month string `json:"month"`
+				Year  string `json:"year"`
+			} `json:"date_to"`
+		} `json:"month"`
+
+		Chart       []chartItem      `json:"chart"`
+		ListDocumentSale []documentItem   `json:"list_document_sale"`
+		ListTopBuyer     []topBuyerItem   `json:"list_top_buyer"`
+	}
+
+    // ======================= CHART PER HARI =========================
+    type chartRaw struct {
+        Date               time.Time
+        TotalPriceSale    float64
+        TotalDisplayPrice float64
+    }
+
+    var rawChart []chartRaw
+
+    config.DB.Raw(`
+        SELECT 
+            DATE(created_at) as date,
+            SUM(total_price) as total_price_sale,
+            SUM(total_old_price) as total_display_price
+        FROM sale_documents
+        WHERE status = 'selesai'
+        AND created_at BETWEEN ? AND ?
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at)
+    `, fromDate, toDate).Scan(&rawChart)
+
+    chart := make([]chartItem, 0)
+
+    for _, r := range rawChart {
+        chart = append(chart, chartItem{
+            Date:              r.Date.Format("02-01-2006"),
+            TotalPriceSale:    r.TotalPriceSale,
+            TotalDisplayPrice: r.TotalDisplayPrice,
+        })
+    }
+
+    // =========================================
+    // LIST DOCUMENT SALE
+    // =========================================
+
+    var listDocument []documentItem
+
+    config.DB.Raw(`
+        SELECT 
+            id,
+            total_price as total_purchase,
+            total_old_price as total_display_price,
+            code_document_sale,
+            buyer_name
+        FROM sale_documents
+        WHERE status = 'selesai'
+        AND created_at BETWEEN ? AND ?
+    `, fromDate, toDate).Scan(&listDocument)
+
+    // =========================================
+    // 3. TOP BUYER
+    // =========================================
+
+    var topBuyer []topBuyerItem
+
+    config.DB.Raw(`
+        SELECT 
+            b.buyer_id,
+            SUM(b.point_buyer) as total_point,
+            b.name_buyer
+        FROM buyers b
+        WHERE b.created_at BETWEEN ? AND ?
+        GROUP BY b.id, b.name_buyer
+        ORDER BY total_point DESC
+        LIMIT 10
+    `, fromDate, toDate).Scan(&topBuyer)
+
+    // =========================================
+    // RESPONSE
+    // =========================================
+
+    response := generalSaleResponse{}
+    response.Month.CurrentMonth.Month = now.Format("January")
+    response.Month.CurrentMonth.Year = now.Format("2006")
+
+    if fromInput != "" {
+        response.Month.DateFrom = &struct {
+            Date  string `json:"date"`
+            Month string `json:"month"`
+            Year  string `json:"year"`
+        }{
+            Date:  fromDate.Format("02"),
+            Month: fromDate.Format("Jan"),
+            Year:  fromDate.Format("2006"),
+        }
+    }
+
+    if toInput != "" {
+        response.Month.DateTo = &struct {
+            Date  string `json:"date"`
+            Month string `json:"month"`
+            Year  string `json:"year"`
+        }{
+            Date:  toDate.Format("02"),
+            Month: toDate.Format("Jan"),
+            Year:  toDate.Format("2006"),
+        }
+    }
+
+    response.Chart = chart
+    response.ListDocumentSale = listDocument
+    response.ListTopBuyer = topBuyer
+
+    c.JSON(200, gin.H{
+        "success": true,
+        "message": "Laporan Data General",
+        "data":    response,
+    })
+}
+func ExportMonthlyAnalyticSales(c *gin.Context) {
+
+	fromInput := c.Query("from")
+	toInput := c.Query("to")
+
+	downloadURL, err := prepareExportMonthlyAnalyticSales(config.DB, fromInput, toInput)
+
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  false,
+			"message": "Gagal membuat file export",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "File export berhasil dibuat",
+		"resource":    downloadURL,
+	})
+}
+func ExportYearlyAnalyticSales(c *gin.Context) {
+
+	year := c.Query("y")
+
+	downloadURL, err := prepareExportYearlyAnalyticSales(config.DB, year)
+
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  false,
+			"message": "Gagal membuat file export",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "File export berhasil dibuat",
+		"resource":    downloadURL,
+	})
+}
+
+//Analytic Sale
+func GetMonthlyAnalyticSale(c *gin.Context) {
+	from := c.Query("from")
+	to := c.Query("to")
+
+	response, err := monthlyAnalyticSales(config.DB, from, to)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  false,
+			"message": "Gagal mengambil data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "Laporan Data Sale",
+		"resource":    response,
+	})
+}
+func GetYearlyAnalyticSale(c *gin.Context) {
+	year := c.Query("y")
+
+	response, err := yearlyAnalyticSales(config.DB, year)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  false,
+			"message": "Gagal mengambil data",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "Laporan Data Sale",
+		"resource":    response,
+	})
+}
+
+//summary-report
+func SummaryBeginBalance(c *gin.Context) {
+
+    loc, err := time.LoadLocation("Asia/Jakarta")
+    if err != nil {
+        c.JSON(500, gin.H{"message": "gagal load timezone"})
+        return
+    }
+
+    // Ambil input date, default hari ini
+    inputDate := c.DefaultQuery("date", time.Now().In(loc).Format("2006-01-02"))
+
+    // Parse tanggal
+    parsed, err := parseFlexibleDate(inputDate, loc)
+    if err != nil {
+        c.JSON(400, gin.H{
+			"success": false,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    // Target = H-1
+    targetDate := parsed.AddDate(0, 0, -1)
+
+    var snapshot models.DailyInventorySnapshot
+
+    err = config.DB.
+        Where("snapshot_date = ?", targetDate.Format("2006-01-02")).
+        First(&snapshot).Error
+
+    var response gin.H
+
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        response = gin.H{
+            "date_snapshot":     targetDate.Format("2006-01-02"),
+            "total_all_product": 0,
+            "total_all_price":   0,
+            "message": "Data saldo awal belum tersedia (cronjob belum berjalan kemarin)",
+        }
+    } else if err != nil {
+        c.JSON(500, gin.H{"message": err.Error()})
+        return
+    } else {
+        response = gin.H{
+            "date_snapshot":     targetDate.Format("2006-01-02"),
+            "total_all_product": snapshot.TotalQty,
+            "total_all_price":   snapshot.TotalPrice,
+        }
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Summary Saldo Awal",
+        "resource":    response,
+    })
+}
+func SummaryEndingBalance(c *gin.Context) {
+
+    loc, _ := time.LoadLocation("Asia/Jakarta")
+
+    filterDateStr := c.DefaultQuery("date", time.Now().In(loc).Format("2006-01-02"))
+    todayStr := time.Now().In(loc).Format("2006-01-02")
+
+	filterDate, err := parseFlexibleDate(filterDateStr, loc)
+    if err != nil {
+        c.JSON(400, gin.H{"success": false, "message": err.Error()})
+        return
+    }
+
+	today, _ := time.ParseInLocation("2006-01-02", todayStr, loc)
+
+    // ========== 1. JIKA TANGGAL LAMA => AMBIL SNAPSHOT ==========
+    if filterDate.Before(today) {
+
+        var snapshot models.DailyInventorySnapshot
+
+        err := config.DB.
+            Where("snapshot_date = ?", filterDate).
+            First(&snapshot).Error
+
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+
+            c.JSON(200, gin.H{
+                "success":  true,
+                "message": "Summary Saldo Akhir (Data History)",
+                "resource": gin.H{
+					"date_current": filterDate.Format("2006-01-02"),
+					"total_all_product": 0,
+					"total_all_price": 0,
+					"note": "Data history tidak ditemukan",
+				},
+			})
+            return
+        }
+
+        c.JSON(200, gin.H{
+            "status":  true,
+            "message": "Summary Saldo Akhir (Data History)",
+            "data": gin.H{
+				"date_current": filterDate.Format("2006-01-02"),
+				"total_all_product": snapshot.TotalQty,
+				"total_all_price": snapshot.TotalPrice,
+			},
+		})
+        return
+    }
+
+    // ========== 2. JIKA HARI INI => HITUNG REALTIME ==========
+    totalQty, totalPrice, err := helpers.CalculateCurrentBalance()
+    if err != nil {
+        c.JSON(500, gin.H{"status": false, "message": err.Error()})
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "status":  true,
+        "message": "Summary Saldo Akhir",
+        "data": gin.H{
+			"date_current": filterDate.Format("2006-01-02"),
+			"total_all_product": totalQty,
+			"total_all_price": totalPrice,
+		},
+    })
+}
+
+
+
+//======================== helper =================================
+
+func prepareExportMonthlyAnalyticSales(db *gorm.DB, from, to string) (string, error) {
+
+	response, err := monthlyAnalyticSales(db, from, to)
+	if err != nil {
+		return "", err
+	}
+
+	f := excelize.NewFile()
+	sheet := "Sheet1"
+
+	// Header
+	headers := []string{
+		"Category Name",
+		"Qty",
+		"Display Price",
+		"Sale Price",
+	}
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	// Isi data
+	for i, v := range response.ListAnalyticSale {
+		row := i + 2
+
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), v.ProductCategory)
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), v.TotalCategory)
+		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), v.DisplayPrice)
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), v.Purchase)
+	}
+
+	// Auto size
+	f.SetColWidth(sheet, "A", "A", 25)
+	f.SetColWidth(sheet, "B", "D", 18)
+
+	fileName := "list-monthly-analytic-sales.xlsx"
+	path := "./public/exports/general-sale/" + fileName
+
+	os.MkdirAll("./public/exports/general-sale/", 0755)
+	if err := f.SaveAs(path); err != nil {
+		return "", err
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/general-sale/%s", os.Getenv("APP_URL"), fileName)
+	return downloadURL, nil
+}
+
+func prepareExportYearlyAnalyticSales(db *gorm.DB, year string) (string, error) {
+
+	response, err := yearlyAnalyticSales(db, year)
+	if err != nil {
+		return "", err
+	}
+
+	f := excelize.NewFile()
+	sheet := "Sheet1"
+
+	// Header
+	headers := []string{
+		"Category Name",
+		"Qty",
+		"Display Price",
+		"Sale Price",
+	}
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	// Isi data
+	for i, v := range response.ListAnalyticSale {
+		row := i + 2
+
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), v.ProductCategory)
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), v.TotalCategory)
+		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), v.DisplayPrice)
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), v.Purchase)
+	}
+
+	// Auto size
+	f.SetColWidth(sheet, "A", "A", 25)
+	f.SetColWidth(sheet, "B", "D", 18)
+
+	fileName := "list-yearly-analytic-sales.xlsx"
+	path := "./public/exports/general-sale/" + fileName
+
+	os.MkdirAll("./public/exports/general-sale/", 0755)
+	if err := f.SaveAs(path); err != nil {
+		return "", err
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/general-sale/%s", os.Getenv("APP_URL"), fileName)
+	return downloadURL, nil
+}
+
+
+func monthlyAnalyticSales(db *gorm.DB, from, to string) (monthlyAnalyticSaleResponse, error) {
+
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		return monthlyAnalyticSaleResponse{}, err
+	}
+
+	now := time.Now().In(loc)
+
+    // ===== parsing tanggal =====
+    var fromDate, toDate time.Time
+    // var err error
+
+    if from != "" {
+        fromDate, err = parseFlexibleDate(from, loc)
+    	if err != nil { 
+			return monthlyAnalyticSaleResponse{}, err
+		}
+    } else {
+		//mencari tanggal 1 di bulan ini
+        fromDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+    }
+
+    if to != "" {
+		toDate, err = parseFlexibleDate(to, loc)
+		if err != nil {
+			return monthlyAnalyticSaleResponse{}, err
+		}
+		toDate = toDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+	} else {
+		// Mencari hari terakhir bulan ini: tgl 1 bulan berikutnya minus 1 hari
+		toDate = time.Date(now.Year(), now.Month()+1, 0, 23, 59, 59, 0, loc)
+	}
+
+	response := monthlyAnalyticSaleResponse{}
+    response.Month.CurrentMonth.Month = now.Format("January")
+    response.Month.CurrentMonth.Year = now.Format("2006")
+
+    if from != "" {
+        response.Month.DateFrom = &struct {
+            Date  string `json:"date"`
+            Month string `json:"month"`
+            Year  string `json:"year"`
+        }{
+            Date:  fromDate.Format("02"),
+            Month: fromDate.Format("Jan"),
+            Year:  fromDate.Format("2006"),
+        }
+    }
+
+    if to != "" {
+        response.Month.DateTo = &struct {
+            Date  string `json:"date"`
+            Month string `json:"month"`
+            Year  string `json:"year"`
+        }{
+            Date:  toDate.Format("02"),
+            Month: toDate.Format("Jan"),
+            Year:  toDate.Format("2006"),
+        }
+    }
+
+	// data per hari
+	var analyticSaleMonthly []analyticSaleMonthly
+	if err := db.Table("sales").
+		Select(`
+			DATE(created_at) as date,
+			product_category,
+			COUNT(product_category) as total_category,
+			SUM(product_old_price) as display_price_sale,
+			SUM(product_price_sale) as purchase
+		`).
+		Where("status_sale = ?", "selesai").
+		Where("created_at BETWEEN ? AND ?", fromDate, toDate).
+		Group("DATE(created_at), product_category").
+		Order("date").
+		Scan(&analyticSaleMonthly).Error; err != nil {
+		return monthlyAnalyticSaleResponse{}, err
+	}
+
+	// PROSES GROUPING DATA
+	// ============================
+	grouped := map[string]map[string]interface{}{}
+
+	for _, r := range analyticSaleMonthly {
+
+		dateKey := r.Date.Format("02-01-2006")
+		// kalau belum ada map untuk tanggal itu
+		if _, ok := grouped[dateKey]; !ok {
+			grouped[dateKey] = map[string]interface{}{
+				"date": dateKey,
+			}
+		}
+		// isi dinamis: nama kategori => total
+		grouped[dateKey][r.ProductCategory] = r.TotalCategory
+	}
+
+	// ubah ke array (values seperti Laravel ->values())
+	result := []map[string]interface{}{}
+
+	for _, v := range grouped {
+		result = append(result, v)
+	}
+
+	response.Chart = result
+
+	// data per kategori
+	var listAnalyticSale []listAnalyticSale
+
+	if err := db.Table("sales").
+		Select(`
+			product_category,
+			COUNT(product_category) as total_category,
+			SUM(product_old_price) as display_price_sale,
+			SUM(product_price_sale) as purchase
+		`).
+		Where("status_sale = ?", "selesai").
+		Where("created_at BETWEEN ? AND ?", fromDate, toDate).
+		Group("product_category").
+		Scan(&listAnalyticSale).Error;  err != nil {
+			return monthlyAnalyticSaleResponse{}, err
+	}
+	response.ListAnalyticSale = listAnalyticSale
+
+	// summary
+	var monthlySummary monthlySummary
+	err = db.Table("sales").
+		Select(`
+			COUNT(product_category) as total_category,
+			SUM(product_old_price) as display_price_sale,
+			SUM(product_price_sale) as purchase
+		`).Where("status_sale = ?", "selesai").
+		Where("created_at BETWEEN ? AND ?", fromDate, toDate).
+		Scan(&monthlySummary).Error
+
+	response.MonthlySummary = monthlySummary
+
+	return response, err
+}
+
+func yearlyAnalyticSales(db *gorm.DB, yearInput string) (yearlyAnalyticSaleResponse, error) {
+    
+	// ===== Load timezone =====
+    loc, err := time.LoadLocation("Asia/Jakarta")
+    if err != nil {
+        return yearlyAnalyticSaleResponse{}, err
+    }
+	
+    // ===== Ambil parameter tahun =====
+    now := time.Now().In(loc)
+    currentYear := now.Format("2006")
+	
+    year := yearInput
+    if year == "" {
+        year = currentYear
+    }
+
+    // ===== Validasi format tahun (YYYY) =====
+    if matched := regexp.MustCompile(`^\d{4}$`).MatchString(year); !matched {
+        return yearlyAnalyticSaleResponse{}, fmt.Errorf("Invalid input format. Year should be in format YYYY")
+    }
+
+	var response yearlyAnalyticSaleResponse
+
+    selectedYear, _ := time.ParseInLocation("2006", year, loc)
+    prevYear := selectedYear.AddDate(-1, 0, 0).Format("2006")
+    nextYear := selectedYear.AddDate(1, 0, 0).Format("2006")
+
+	response.Year.CurrentYear = currentYear
+	response.Year.PrevYear = prevYear
+	response.Year.SelectedYear = selectedYear.Format("2006")
+	response.Year.NextYear = nextYear
+
+    analyticSalesYearly := []map[string]interface{}{}
+
+    // ===== 5. Loop 12 bulan =====
+    for month := 1; month <= 12; month++ {
+
+        // --- Summary bulan ---
+        var sale struct {
+            TotalAllCategory int64
+            DisplayPriceSale float64
+            Purchase         float64
+        }
+
+        if err := db.Model(&models.Sale{}).
+            Select(`
+                COUNT(product_category) as total_all_category,
+                SUM(product_old_price) as display_price_sale,
+                SUM(product_price_sale) as purchase
+            `).
+            Where("status_sale = ?", "selesai").
+            Where("YEAR(created_at) = ?", year).
+            Where("MONTH(created_at) = ?", month).
+            Scan(&sale).Error; err != nil {
+			return yearlyAnalyticSaleResponse{}, err
+		}
+
+		monthName := time.Date(selectedYear.Year(), time.Month(month), 1, 0, 0, 0, 0, loc).
+            Format("January")
+
+        analyticSalesPerMonth := map[string]interface{}{
+            "month":             monthName,
+            "total_all_category": sale.TotalAllCategory,
+            "display_price_sale": sale.DisplayPriceSale,
+            "purchase":          sale.Purchase,
+        }
+		
+        // --- Per category ---
+        rows, _ := db.Model(&models.Sale{}).
+            Select(`
+                product_category,
+                COUNT(product_category) as total_category
+            `).
+            Where("status_sale = ?", "selesai").
+            Where("YEAR(created_at) = ?", year).
+            Where("MONTH(created_at) = ?", month).
+            Group("product_category").
+            Rows()
+
+        for rows.Next() {
+            var cat string
+            var total int64
+            rows.Scan(&cat, &total)
+
+            analyticSalesPerMonth[cat] = total
+        }
+
+		analyticSalesYearly = append(analyticSalesYearly, analyticSalesPerMonth)
+    }
+
+	response.Chart = analyticSalesYearly
+
+    // =====List analytic per category (tahunan) =====
+    var listAnalyticSales []listAnalyticSale
+
+    if err := db.Model(&models.Sale{}).
+        Select(`
+            product_category,
+            COUNT(product_category) as total_category,
+            SUM(product_old_price) as display_price_sale,
+            SUM(product_price_sale) as purchase
+        `).
+        Where("status_sale = ?", "selesai").
+        Where("YEAR(created_at) = ?", year).
+        Group("product_category").
+        Scan(&listAnalyticSales).Error; err != nil {
+			return yearlyAnalyticSaleResponse{}, err
+	}
+
+	response.ListAnalyticSale = listAnalyticSales
+
+    // ===== Summary tahunan =====
+    var annSummary annualSummary
+
+    if err := db.Model(&models.Sale{}).
+        Select(`
+            COUNT(product_category) as total_all_category,
+            SUM(product_old_price) as total_display_price_sale,
+            SUM(product_price_sale) as total_product_price_sale
+        `).
+        Where("status_sale = ?", "selesai").
+        Where("YEAR(created_at) = ?", year).
+        Scan(&annSummary).Error; err != nil {
+		return yearlyAnalyticSaleResponse{}, err
+	}
+
+    // ===== Response =====
+	response.AnnualSummary = annSummary
+
+	return response, nil
+}
+
+
+
 func percent(v, t float64) float64 {
 	if t == 0 {
 		return 0
@@ -356,4 +1225,22 @@ func queryInventoryAggregate(db *gorm.DB) ([]categoryAggregate, error) {
 	return result, err
 }
 
+func parseFlexibleDate(input string, loc *time.Location) (time.Time, error) {
+    layouts := []string{
+        "2006-01-02", // standar API
+        "02-01-2006", // format indo
+        "02/01/2006", // alternatif
+    }
+
+    for _, layout := range layouts {
+        if t, err := time.ParseInLocation(layout, input, loc); err == nil {
+            return t, nil
+        }
+    }
+
+     return time.Time{}, fmt.Errorf(
+        "format tanggal '%s' tidak dikenali. Gunakan format: YYYY-MM-DD atau DD-MM-YYYY",
+        input,
+    )
+}
 
