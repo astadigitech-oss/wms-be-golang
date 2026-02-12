@@ -35,8 +35,15 @@ func RouteHandler(r *gin.Engine) {
 	protected.Use(middleware.AuthCheck())
 	{
 		/* ==================== Dashboard ==================== */
+		//summary report all role
+		protected.GET("dashboard/summary-begin-balance", controllers.SummaryBeginBalance) //DashboardController.go
+		protected.GET("dashboard/summary-ending-balance", controllers.SummaryEndingBalance) //DashboardController.go
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir"}, func(rg *gin.RouterGroup) {
 			rg.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
+			rg.GET("dashboard/general-sales", controllers.GetGeneralSales) //DashboardController.go
+			rg.GET("dashboard/monthly-analytic-sales", controllers.GetMonthlyAnalyticSale) //DashboardController.go
+			rg.GET("dashboard/yearly-analytic-sales", controllers.GetYearlyAnalyticSale) //DashboardController.go
+			rg.GET("dashboard/monthly-analytic-sales/export", controllers.ExportMonthlyAnalyticSales) //DashboardController.go
 		})
 		/* ==================== Inbound Routes ==================== */
 		roleGroup(protected, []string{"Spv", "Team leader"}, func(rg *gin.RouterGroup) {
@@ -44,6 +51,7 @@ func RouteHandler(r *gin.Engine) {
 			rg.POST("/generate/merge-headers", controllers.MapAndMergeHeaders) //GenerateController.go
 			//Bulking Product
 			rg.POST("/bulking/product/category", controllers.ImportBulkingCategory) //BulkingController.go
+			rg.POST("/bulking/product/color", controllers.ImportBulkingColor) //BulkingController.go
 		})
 
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
@@ -270,8 +278,11 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Admin Kasir", "Kasir leader"}, func(rg *gin.RouterGroup) {
 			//Buyer
 			rg.GET("buyers", controllers.GetBuyers) //BuyerController.go
+			rg.GET("buyers/:buyer_id", controllers.DetailBuyer) //BuyerController.go
 			rg.GET("monthly-buyer", controllers.GetBuyerMonthlyPoints) //BuyerController.go
 			rg.GET("summary-buyer", controllers.GetBuyerSummary) //BuyerController.go
+			rg.POST("buyers", controllers.StoreBuyer) //BuyerController.go
+			rg.PUT("buyers/:buyer_id", controllers.UpdateBuyer) //BuyerController.go
 		})
 
 		roleGroup(protected, []string{"Admin", "Spv", "Reparasi"}, func(rg *gin.RouterGroup) {
