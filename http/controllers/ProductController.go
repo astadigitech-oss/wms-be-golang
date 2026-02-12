@@ -702,8 +702,9 @@ type productWithCategoryName struct {
     Barcode     string    `json:"barcode"`
     Name        string    `json:"name"`
     Price       float64   `json:"price"`
-    Status       string   `json:"status"`
-    DisplayPrice       float64   `json:"display_price"`
+    OldPrice    float64   `json:"old_price"`
+    Status      string    `json:"status"`
+    DisplayPrice float64   `json:"display_price"`
     Quantity    int       `json:"quantity"`
     CategoryID  uint      `json:"category_id"`
     CategoryName string   `json:"category_name"` // Harus sesuai dengan alias SELECT
@@ -730,6 +731,7 @@ func StaggingProduct(c *gin.Context) {
             products.barcode,
             products.name,
             products.price,
+            products.old_price_product AS old_price,
             products.status,
             products.display_price,
             products.quantity,
@@ -1096,18 +1098,6 @@ func StaggingFilterProduct(c *gin.Context) {
 	var total int64
 
 	db := config.DB.Model(&models.Product{}).
-        Select(`
-            products.id, 
-            products.barcode,
-            products.name,
-            products.price,
-            products.status,
-            products.display_price,
-            products.quantity,
-            products.category_id, 
-            products.created_at, 
-            categories.name_category AS category_name
-        `).
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
         Where("products.location_type = ?", "staging").
         Where("products.staging_stage = ?", "process")
@@ -1123,15 +1113,35 @@ func StaggingFilterProduct(c *gin.Context) {
         `, like, like, like)
 	}
 
+    sessionDB := db.Session(&gorm.Session{})
+
+    var total_price float64
+    if err := sessionDB.Select("COALESCE(SUM(products.price), 0)").Scan(&total_price).Error; err != nil {
+        c.JSON(500, gin.H{"success": false, "message": "gagal menghitung total price product", "error":err.Error()})
+		return
+    }
+
 	// TOTAL COUNT (for pagination info)
-    countDB := db.Session(&gorm.Session{})
-	if err := countDB.Count(&total).Error; err != nil {
-		c.JSON(500, gin.H{"success": false, "message": err})
+	if err := sessionDB.Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "gagal menghitung total product", "error":err.Error()})
 		return
 	}
 
 	// GET DATA
 	if err := db.
+        Select(`
+            products.id, 
+            products.barcode,
+            products.name,
+            products.price,
+            products.old_price_product AS old_price,
+            products.status,
+            products.display_price,
+            products.quantity,
+            products.category_id, 
+            products.created_at, 
+            categories.name_category AS category_name
+        `).
 		Limit(limit).
 		Offset(offset).
 		Find(&products).Error; err != nil {
@@ -1148,16 +1158,19 @@ func StaggingFilterProduct(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"data": gin.H{
 			"status":  true,
-			"message": "List Documents",
+			"message": "List Product Filter",
 			"resource": gin.H{
-				"current_page":   page,
-				"data":           products,
-				"from":           offset + 1,
-				"last_page":      lastPage,
-				"links":          links,
-				"per_page":       limit,
-				"to":             offset + len(products),
-				"total":          total,
+                "total_new_price": total_price,
+                "data" : gin.H{
+                    "current_page":   page,
+                    "data":           products,
+                    "from":           offset + 1,
+                    "last_page":      lastPage,
+                    "links":          links,
+                    "per_page":       limit,
+                    "to":             offset + len(products),
+                    "total":          total,
+                },
 			},
 		},
 	})
