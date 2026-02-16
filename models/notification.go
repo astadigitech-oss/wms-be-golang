@@ -10,7 +10,7 @@ type Notification struct {
     ID        uint `gorm:"primaryKey" json:"id"`
     UserID uint `gorm:"column:user_id;not null;index" json:"user_id"`
     NotificationName string `json:"notification_name"`
-    Status           string `gorm:"type:enum('pending','done','staging','display');default:'pending'" json:"status"`
+    Status           string `gorm:"type:enum('pending','done','staging','display', 'sale');default:'pending'" json:"status"`
     Role             string `json:"role"`
     RiwayatCheckID *uint `gorm:"index;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"riwayat_check_id"`
     ReadAt           *time.Time `json:"read_at"`
@@ -19,6 +19,6 @@ type Notification struct {
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
     
-    User   User `gorm:"foreignKey:UserID;references:ID"` 
-    RiwayatCheck   RiwayatCheck `gorm:"foreignKey:RiwayatCheckID;references:ID"` // Definisi Relasi
+    User   *User `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"` 
+    RiwayatCheck   *RiwayatCheck `gorm:"foreignKey:RiwayatCheckID;references:ID" json:"riwayat_check,omitempty"` // Definisi Relasi
 }

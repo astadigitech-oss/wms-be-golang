@@ -699,6 +699,7 @@ func incrementOrCreateSoColor(tx *gorm.DB,summaryColorID uint,color string,quali
 // ============================= STAGGING =============================
 type productWithCategoryName struct {
     ID          uint      `json:"id"`
+    CodeDocument          string      `json:"code_document"`
     Barcode     string    `json:"barcode"`
     Name        string    `json:"name"`
     Price       float64   `json:"price"`
@@ -728,6 +729,7 @@ func StaggingProduct(c *gin.Context) {
 	db := config.DB.Model(&models.Product{}).
         Select(`
             products.id, 
+            products.code_document,
             products.barcode,
             products.name,
             products.price,
@@ -838,7 +840,7 @@ func UpdateDataProduct(c *gin.Context) {
         NewPriceProduct    float64 `json:"new_price_product" binding:"required,gt=0"`
         CategoryID         uint64  `json:"category_id" binding:"required"`
         // Diskon hanya bisa angka bulat (int) dan rentang 0-100
-        Discount           int     `json:"discount" binding:"required,min=0,max=100"` 
+        Discount           int     `json:"discount" binding:"required,min=0,max=100"`
         OldPriceProduct    float64 `json:"old_price_product" binding:"required,gt=0"`
     }
 
@@ -952,6 +954,7 @@ func UpdateDataProduct(c *gin.Context) {
 
     updateData := map[string]interface{}{
         "name": payload.NewNameProduct,
+        "old_price_product": payload.OldPriceProduct,
         "quantity": payload.NewQuantityProduct,
         "discount": payload.Discount,
     }
@@ -1021,18 +1024,19 @@ func UpdateDataProduct(c *gin.Context) {
 
     if user.Role.RoleName != "Admin" && user.Role.RoleName != "Spv" {
 
+        new_discount := float64(payload.Discount)
         pID := uint(product.ID)
         approveQueue := models.ApproveQueue{
             UserID: &user.ID,
             ProductID: &pID,
             Type: &tipe,
             CodeDocument: &payload.CodeDocument,
-            OldPriceProduct: &product.OldPriceProduct,
+            OldPriceProduct: &payload.OldPriceProduct,
             NewNameProduct: &payload.NewNameProduct,
             NewQuantityProduct: &payload.NewQuantityProduct,
             NewPriceProduct: &payload.NewPriceProduct,
-            NewDiscount: &discount,
-            CategoryID: &payload.CategoryID,
+            NewDiscount: &new_discount,
+            CategoryID: &category.ID,
             Status: "1",
         }
 
@@ -1046,7 +1050,7 @@ func UpdateDataProduct(c *gin.Context) {
         notification := models.Notification{
             UserID: user.ID,
             NotificationName: actionName,
-            Role: user.Role.RoleName,
+            Role: "Spv",
             Status: tipe,
             ExternalID: &pID,
             Approved: &approved,

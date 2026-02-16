@@ -310,5 +310,12 @@ func RouteHandler(r *gin.Engine) {
 
 		/* ==================== GENERALE ==================== */
 		protected.GET("/product-price-colors", controllers.GetColorTagByPrice) //ColorTagController.go
+
+		//notification
+		protected.GET("/notif-widget", controllers.NotifWidget) //NotificationController.go
+		protected.GET("/notifications", controllers.GetNotifications) //NotificationController.go
+		protected.GET("/notifications/:notif_id/:status", controllers.GetApproveSPV) //NotificationController.go
+		protected.GET("/approve-edit/:approve_id", controllers.ApproveEdit) //NotificationController.go
+		protected.GET("/reject-edit/:approve_id", controllers.RejectEdit) //NotificationController.go
 	}
 }
