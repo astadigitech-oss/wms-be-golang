@@ -1,10 +1,14 @@
 package controllers
 
 import (
+	"database/sql"
 	"fmt"
+	services "liquid8/wms/Services"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
+	"os"
+	"path/filepath"
 
 	"errors"
 	"math"
@@ -16,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -742,7 +747,7 @@ func StaggingProduct(c *gin.Context) {
             categories.name_category AS category_name
         `).
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Where("products.status IN ?", []string{"display", "expired"}).
+        Where("products.status IN ?", []string{"display", "expired", "slow_moving"}).
         Where("products.quality = ?", "lolos").
         Where("products.location_type = ?", "staging").
         Where("products.staging_stage IS NULL")
@@ -927,7 +932,7 @@ func UpdateDataProduct(c *gin.Context) {
     //cek product
     var product models.Product
     if err := tx.Where("barcode = ?", barcode).
-            Where("status IN ?", []string{"display", "expired"}).
+            Where("status IN ?", []string{"display", "expired", "slow_moving"}).
             Where("quality = ?", "lolos").
             Where("staging_stage IS NULL").
             First(&product).Error; err != nil {
@@ -1317,7 +1322,7 @@ func ProductToDamaged(c *gin.Context) {
 
     var product models.Product
     if err := tx.Where("barcode = ?", barcode).
-        Where("status IN ?", []string{"display", "expired"}).
+        Where("status IN ?", []string{"display", "expired", "slow_moving"}).
         Where("quality = ?", "lolos").
         Where("staging_stage IS NULL").First(&product).Error; err != nil {
         
@@ -1436,6 +1441,120 @@ func ProductToDamaged(c *gin.Context) {
         "status": true,
         "message": "Product berhasil diubah ke damaged",
     })
+}
+
+func ExportStagingProduct(c *gin.Context) {
+    loc, err := time.LoadLocation("Asia/Jakarta")
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+	const fileName = "product-staging.xlsx"
+	const chunkSize = 500
+
+	f := excelize.NewFile()
+	sheetName := "Sheet1"
+	streamWriter, err := f.NewStreamWriter(sheetName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Write Header
+	headers := []interface{}{
+		"Code Document",
+		"Old Barcode Product",
+		"New Barcode Product",
+		"New Name Product",
+		"New Quantity Product",
+		"New Price Product",
+		"Old Price Product",
+		"New Date In Product",
+		"New Status Product",
+		"New Quality",
+		"New Category Product",
+	}
+
+	cell, _ := excelize.CoordinatesToCellName(1, 1)
+	if err := streamWriter.SetRow(cell, headers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	rowID := 2
+    lastID := uint64(0)
+
+	for {
+		var products []models.Product
+
+		err := config.DB.
+            Preload("Category").
+			Where("id > ?", lastID).
+			Where("tag_color_id IS NULL").
+			Where("staging_stage IS NULL").
+            Where("location_type = ?", "staging").
+			Where("status NOT IN ?", []string{"dump", "expired", "sale", "migrate", "repair"}).
+			Order("id ASC").
+			Limit(chunkSize).
+			Find(&products).Error
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if len(products) == 0 {
+			break
+		}
+
+		for _, p := range products {
+            lastID = p.ID
+            date_in := p.CreatedAt.In(loc).Format("2006-01-02")
+			row := []interface{}{
+				*p.CodeDocument,
+				*p.OldBarcodeProduct,
+				p.Barcode,
+				p.Name,
+				p.Quantity,
+				p.Price,
+				p.OldPriceProduct,
+				date_in,
+				p.Status,
+				p.Quality,
+				p.Category.NameCategory,
+			}
+
+			cell, _ := excelize.CoordinatesToCellName(1, rowID)
+			if err := streamWriter.SetRow(cell, row); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			rowID++
+		}
+	}
+
+	if err := streamWriter.Flush(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Save file
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+	fullPath := filepath.Join(dir, fileName)
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "File berhasil diunduh",
+		"url":     downloadURL,
+	})
 }
 
 // approvement
@@ -1686,7 +1805,6 @@ func GetDetailProduct(c *gin.Context) {
     product_id := c.Param("product_id")
 
 	//inisialisasi query
-    
 	baseQuery := config.DB.Model(&models.Product{}).
         Select(`
             products.id AS id,
@@ -1809,7 +1927,7 @@ func GetProductsByCategory(c *gin.Context) {
 			LEFT JOIN categories c ON c.id = p.category_id
 			WHERE p.tag_color_id IS NULL
 				AND p.category_id IS NOT NULL
-				AND p.status IN ('display','expired')
+				AND p.status IN ('display','expired','slow_moving')
 				AND p.location_type = 'main'
 				AND p.quality = 'lolos'
 				AND (p.warehouse_type IS NULL OR p.warehouse_type = 'type1')
@@ -2737,6 +2855,118 @@ func AbnormalToDisplay(c *gin.Context) {
 
 }
 
+func ExportAbnormalProduct(c *gin.Context) {
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+
+	const chunkSize = 500
+	fileName := fmt.Sprintf("product-abnormal-%s.xlsx",
+		time.Now().In(loc).Format("2006-01-02"),
+	)
+
+	f := excelize.NewFile()
+	sheetName := "Sheet1"
+
+	streamWriter, err := f.NewStreamWriter(sheetName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// ================= HEADER =================
+	headers := []interface{}{
+		"Code Document",
+		"Old Barcode Product",
+		"New Barcode Product",
+		"Keterangan",
+		"New Name Product",
+		"New Quantity Product",
+		"New Price Product",
+		"Old Price Product",
+		"New Status Product",
+		"New Category Product",
+		"New Tag Product",
+	}
+
+	cell, _ := excelize.CoordinatesToCellName(1, 1)
+	if err := streamWriter.SetRow(cell, headers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	rowID := 2
+	var lastID uint64 = 0
+
+	for {
+		var products []models.Product
+
+		err := config.DB.
+            Preload("Category").
+            Preload("ColorTag").
+			Where("id > ?", lastID).
+			Where("quality = ?", "abnormal").
+			Where("is_so IS NULL").
+			Where("status NOT IN ?", []string{"migrate", "sale"}).
+			Order("id ASC").
+			Limit(chunkSize).
+			Find(&products).Error
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if len(products) == 0 {
+			break
+		}
+
+		for _, p := range products {
+			lastID = p.ID
+
+			row := []interface{}{
+				*p.CodeDocument,
+				*p.OldBarcodeProduct,
+				p.Barcode,
+				p.QualityText,
+				p.Name,
+				p.Quantity,
+				p.Price,
+				p.OldPriceProduct,
+				p.Status,
+				p.Category.NameCategory,
+				p.ColorTag.NameColor,
+			}
+
+			cell, _ := excelize.CoordinatesToCellName(1, rowID)
+			streamWriter.SetRow(cell, row)
+			rowID++
+		}
+	}
+
+	if err := streamWriter.Flush(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Save file
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "File berhasil diunduh",
+		"url":     downloadURL,
+	})
+}
+
+
 //Damaged
 func GetProductDamageds(c *gin.Context) {
     q := strings.TrimSpace(c.Query("q"))
@@ -3319,6 +3549,350 @@ func GetRepairDocuments(c *gin.Context) {
 			"links" :		links,
 		},
 	})
+}
+
+func ExportRepairDocument(c *gin.Context) {
+    doc_id := c.Param("doc_id")
+    type_document := c.Param("type")
+
+    if type_document != "damaged" && type_document != "non" {
+        c.JSON(400, gin.H{
+            "success": false,
+            "message": "Document type is invalid",
+        })
+        return
+    }
+
+	loc, _ := time.LoadLocation("Asia/Jakarta")
+	const chunkSize = 500
+
+    var document models.RepairDocument
+    if err := config.DB.Where("id = ? AND type_document = ?", doc_id, type_document).
+        First(&document).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(404, gin.H{
+                "success": false,
+                "message": "Document tidak ditemukan",
+            })
+        }else {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+        }
+        return
+    }
+
+	fileName := fmt.Sprintf("%s.xlsx", document.CodeDocument)
+
+	f := excelize.NewFile()
+	sheetName := "Sheet1"
+
+	streamWriter, err := f.NewStreamWriter(sheetName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// ================= HEADER =================
+	headers := []interface{}{
+		// "Source",
+		"Code Document",
+		"Old Barcode Product",
+		"New Barcode Product",
+		"Name Product",
+		"Category Product",
+		"Quantity Product",
+		"Old Price Product",
+		"New Price Product",
+		"Date In",
+		"Status",
+		"Description",
+		"Color Tag",
+		"Discount",
+        "CreatedAt",
+	}
+
+	//set width colom
+    startCol,_ := excelize.ColumnNumberToName(1)
+    endCol, _ := excelize.ColumnNumberToName(len(headers))
+
+    if err := f.SetColWidth(sheetName, startCol, endCol, 20.0); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+        return
+    }
+
+    //style header
+    styleID, _ := f.NewStyle(&excelize.Style{
+        Font: &excelize.Font{
+            Bold:  true,
+            Size:  11,
+            Color: "FFFFFF",
+        },
+        Alignment: &excelize.Alignment{
+            Vertical:   "center",
+        },
+        Fill: excelize.Fill{
+            Type:    "pattern",
+            Pattern: 1,
+            Color:   []string{"4472C4"},
+        },
+    })
+
+    // Bold style untuk summary
+    boldStyle, _ := f.NewStyle(&excelize.Style{
+        Font: &excelize.Font{
+            Bold: true,
+        },
+        NumFmt: 3,
+    })
+
+    // ROW 1 - 3 (SUMMARY)
+    rows := [][]interface{}{
+        {
+            excelize.Cell{StyleID: boldStyle, Value: "Total Product"},
+            fmt.Sprintf("%d pcs", document.TotalProduct),
+        },
+        {
+            excelize.Cell{StyleID: boldStyle, Value: "Total New Price"},
+            "Rp " + helpers.HumanizeNumber(document.TotalNewPrice),
+        },
+        {
+            excelize.Cell{StyleID: boldStyle, Value: "Total Old Price"},
+            "Rp " + helpers.HumanizeNumber(document.TotalOldPrice),
+        },
+        {""}, // baris kosong
+    }
+
+    for i, row := range rows {
+        cell, _ := excelize.CoordinatesToCellName(1, i+1)
+        if err := streamWriter.SetRow(cell, row); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+            return
+        }
+    }   
+
+    var headerRow []interface{}
+    for _, h := range headers {
+        headerRow = append(headerRow, excelize.Cell{
+            StyleID: styleID,
+            Value:   h,
+        })
+    }
+
+    //header row 5
+    cell, _ := excelize.CoordinatesToCellName(1, 5)
+    if err := streamWriter.SetRow(cell, headerRow); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+        return
+    }
+
+	lastID := 0
+	rowIndex := 6
+
+	for {
+		query := `
+			SELECT 
+				p.id,
+				CASE 
+					WHEN p.quality = 'migrate' THEN 'migrate'
+					WHEN p.location_type = 'main' THEN 'display'
+					ELSE 'staging' 
+				END AS source,
+				COALESCE(rd.status, 'N/A') AS document_status,
+				COALESCE(p.code_document, 'NULL') AS code_document,
+				COALESCE(p.old_barcode_product, 'NULL') AS old_barcode_product,
+				p.barcode,
+				p.name,
+				COALESCE(c.name_category, 'NULL') AS category,
+				p.quantity,
+				p.old_price_product,
+				p.price,
+				COALESCE(p.quality_text, 'NULL') AS quality_text,
+				p.status,
+				COALESCE(ct.name_color, 'NULL') AS color_tag,
+				p.discount,
+				p.created_at
+			FROM products p
+			LEFT JOIN categories c 
+				ON c.id = p.category_id
+			LEFT JOIN color_tags ct 
+				ON ct.id = p.tag_color_id
+			JOIN repair_document_items rdi 
+				ON rdi.product_id = p.id
+			JOIN repair_documents rd 
+				ON rd.id = rdi.repair_document_id
+			WHERE p.id > ?
+			AND rd.id = ?
+			ORDER BY p.id ASC
+			LIMIT ?
+		`
+		rows, err := config.DB.Raw(query, lastID, document.ID, chunkSize).Rows()
+		if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+			return
+		}
+
+		count := 0
+
+		for rows.Next() {
+			var (
+				idProd int
+				source, status, docStatus, code string
+				oldBarcode, newBarcode string
+				name, category, qualityText, colorTag string
+				qty int
+				oldPrice, newPrice float64
+                discount sql.NullFloat64
+				createdAt time.Time
+			)
+
+			err := rows.Scan(
+				&idProd,
+				&source,
+				&docStatus,
+				&code,
+				&oldBarcode,
+				&newBarcode,
+				&name,
+				&category,
+				&qty,
+				&oldPrice,
+				&newPrice,
+				&qualityText,
+				&status,
+				&colorTag,
+				&discount,
+				&createdAt,
+			)
+			if err != nil {
+				rows.Close()
+                c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+				return
+			}
+
+			dateIn := createdAt.In(loc).Format("2006-01-02")
+            var discountValue float64
+            if discount.Valid {
+                discountValue = discount.Float64
+            } else {
+                discountValue = 0 // atau sesuai kebutuhan
+            }
+
+			row := []interface{}{
+				// source,
+				code,
+				" " + oldBarcode,
+				" " + newBarcode,
+				name,
+				category,
+				qty,
+				oldPrice,
+				newPrice,
+				dateIn,
+                status,
+				qualityText,
+				colorTag,
+				discountValue,
+				createdAt.In(loc).Format("2006-01-02 15:04"),
+			}
+
+			cell, _ := excelize.CoordinatesToCellName(1, rowIndex)
+			if err := streamWriter.SetRow(cell, row); err != nil {
+				rows.Close()
+                c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+				return
+			}
+
+			lastID = idProd
+			rowIndex++
+			count++
+		}
+
+		rows.Close()
+
+		// Kalau tidak ada data lagi, stop loop
+		if count == 0 {
+			break
+		}
+	}
+
+	if err := streamWriter.Flush(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Save file
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "File berhasil diunduh",
+		"url":     downloadURL,
+	})
+}
+
+func ExportAllProductRepairByType(c *gin.Context) {
+    type_document := c.Param("type")
+
+    if type_document != "damaged" && type_document != "non" {
+        c.JSON(400, gin.H{
+            "success": false,
+            "message": "Document type is invalid",
+        })
+        return
+    }
+
+    f := excelize.NewFile()
+    //mengubah nama sheet
+    sheet1 := "All Products"
+    f.SetSheetName("Sheet1", sheet1)
+
+    if err := services.WriteAllProductRepair(f, sheet1, type_document); err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal memproses " + sheet1,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    sheet2 := "Document Summary"
+    f.NewSheet(sheet2)
+
+    if err := services.WriteRepairSummaryStream(f, sheet2, type_document); err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal memproses " + sheet2,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    //save file
+    fileName := fmt.Sprintf("All_%s_%s.xlsx",type_document,time.Now().Format("2006-01-02"))
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+    downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+    c.JSON(200, gin.H{
+        "success": true,
+        "file_name": fileName,
+        "download_url": downloadURL,
+    })
 }
 
 func DetailRepairDocuments(c *gin.Context) {

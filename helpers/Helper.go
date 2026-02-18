@@ -213,22 +213,42 @@ func GenerateCodeMigrateRepair(db *gorm.DB) (string, error) {
 	)
 
 	now := time.Now()
-	datePart := fmt.Sprintf("%02d%02d%04d", now.Day(), int(now.Month()), now.Year())
+	datePart := fmt.Sprintf("%04d%02d", now.Year(), int(now.Month()))
+	prefix := fmt.Sprintf("LQMR%s", datePart)
 
-	//ambil MAX(id)
-	// var nextID int64
-	// err := db.Model(&models.Product{}).
-	// 	Select("COALESCE(MAX(id), 0) + 1").
-	// 	Scan(&nextID).Error
-	// if err != nil {
-	// 	return "", err
-	// }
+	var lastCode sql.NullString
+	// Ambil code terakhir berdasarkan user
+	err := db.
+		Model(&models.MigrateRepairDocument{}).
+		Select("code").
+		Where("code LIKE ?", fmt.Sprintf("%s%%", prefix)).
+		Order("id DESC").
+		Limit(1).
+		Scan(&lastCode).
+		Error
+	if err != nil {
+		return "", err
+	}
+
+	// Default jika belum ada data
+	nextID := 1
+
+	// Jika sudah ada code sebelumnya
+	if lastCode.Valid {
+		code := lastCode.String // contoh: LQMR2026020001
+
+		numPart := code[len(prefix):] // ambil "0001"
+		if num, err := strconv.Atoi(numPart); err == nil {
+			nextID = num + 1
+		}
+	}
+
 
 	for attempt := 1; attempt <= maxRetry; attempt++ {
 
 		// --- generate random alphanumeric ---
-		random := RandomString(length)
-		barcode := fmt.Sprintf("%s%s", datePart, random)
+		// random := RandomString(length)
+		barcode := fmt.Sprintf("%s%04d", prefix, nextID)
 
 		// --- cek apakah barcode sudah ada di DB ---
 		var count int64
@@ -1141,6 +1161,26 @@ func CalculateCurrentBalance() (int64, float64, error) {
     return totalAllProduct, totalAllPrice, nil
 }
 
+
+func HumanizeNumber(n float64) string {
+    s := fmt.Sprintf("%.0f", n)
+    nStr := ""
+    for i, c := range reverse(s) {
+        if i != 0 && i%3 == 0 {
+            nStr = "." + nStr
+        }
+        nStr = string(c) + nStr
+    }
+    return nStr
+}
+
+func reverse(s string) string {
+    r := []rune(s)
+    for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+        r[i], r[j] = r[j], r[i]
+    }
+    return string(r)
+}
 
 
 

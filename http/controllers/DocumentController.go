@@ -2,10 +2,13 @@ package controllers
 
 import (
 	"errors"
+	services "liquid8/wms/Services"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"database/sql"
@@ -19,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -1225,6 +1229,244 @@ func ListMigrateRepairDocs(c *gin.Context) {
 	})
 }
 
+func GetMigrateRepairIndex(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
+
+	q := c.Query("q")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
+
+	offset := (page - 1) * limit
+
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	var repair models.MigrateRepairDocument
+
+	// Cari repair yang status proses
+	err := config.DB.
+		Where("user_id = ? AND status = ?", user.ID, "process").
+		Order("created_at DESC").
+		First(&repair).Error
+
+	// Kalau tidak ada, buat baru
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+
+		code, err := helpers.GenerateCodeMigrateRepair(config.DB)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal menghasilkan kode", "error": err.Error()})
+			return
+		}
+
+		repair = models.MigrateRepairDocument{
+			UserID:   uint64(user.ID),
+			NameUser: user.Name,
+			Status:   "process",
+			Code:     code,
+		}
+
+		links := helpers.BuildPaginationLinks(c, page, 1)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "List Migrate Repair Items",
+			"resource":  gin.H{
+				"migrate_document": repair,
+				"migrate_bulky_product": gin.H{
+					"current_page": page,
+					"data": []models.MigrateRepairItem{},
+					"links": links,
+					"per_page": limit,
+					"total_data": 0,
+				},
+			},
+		})
+	}
+
+	// Ambil items berdasarkan repair ID
+	type productsData struct {
+        ID          uint64  `json:"id"`
+        OldBarcode  string  `json:"old_barcode"`
+        NewBarcode     string  `json:"new_barcode"`
+        Name        string  `json:"name"`
+        Price       float64 `json:"price"`
+        OldPrice       float64 `json:"old_price"`
+        Status      string  `json:"status"`
+        Category    string  `json:"category"`
+		IsSO		string  `json:"is_so"`
+    }
+
+	var items []productsData
+	query := config.DB.Table("migrate_repair_items").
+		Select(`
+			migrate_repair_items.id AS id,
+			products.old_barcode_product AS old_barcode,
+			products.barcode AS new_barcode,
+			products.name AS name,
+			products.price AS price,
+			products.old_price_product AS old_price,
+			products.status AS status,
+			categories.name_category AS category,
+			products.is_so AS is_so
+		`).
+		Joins("JOIN products ON products.id = migrate_repair_items.product_id").
+		Joins("JOIN categories ON categories.id = products.category_id").
+		Where("repair_document_id = ?", repair.ID)
+
+	if q != "" {
+		query = query.Where("(products.name LIKE ? OR products.barcode LIKE ? OR products.old_barcode_product LIKE ?)", "%"+q+"%", "%"+q+"%", "%"+q+"%")
+	}
+
+	var totalData int64
+	if err := query.Session(&gorm.Session{}).Count(&totalData).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if err := query.
+		Order("migrate_repair_items.created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&items).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	//build pagination
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
+
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	// Tambah status readable
+	for i := range items {
+		if items[i].IsSO == "done" {
+			items[i].IsSO = "Sudah SO"
+		} else {
+			items[i].IsSO = "Belum SO"
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "List Migrate Repair Items",
+		"resource":  gin.H{
+			"migrate_document": repair,
+			"migrate_bulky_product": gin.H{
+				"current_page": page,
+				"data": items,
+				"links": links,
+				"per_page": limit,
+				"total_data": totalData,
+			},
+		},
+	})
+}
+
+func DeleteMigrateRepairItem(c *gin.Context) {
+	item_id := c.Param("item_id")
+
+	//Start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"status": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	//mbil repair item
+	var repair_item models.MigrateRepairItem
+	if err := tx.First(&repair_item, item_id).Error;  err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Repair item not found"})
+		}else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal mengambil data repair item", "error": err.Error()})
+		}
+
+		tx.Rollback()
+		return
+	}
+
+	//ambil repair doc
+	var migrate_doc models.MigrateRepairDocument
+	if err := tx.
+		Preload("MigrateRepairItem").
+		Where("id = ?", repair_item.RepairDocumentID).First(&migrate_doc).Error;  err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Repair document not found"})
+		}else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal mengambil data repair document", "error": err.Error()})
+		}
+
+		tx.Rollback()
+		return
+	}
+
+	// update quality product
+	result := tx.Model(&models.Product{}).Where("id = ?", repair_item.ProductID).
+		Updates(map[string]interface{}{"status": "display", "quality": "lolos", "quality_text": nil})
+	
+	if result.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "gagal update quality product", "error": result.Error.Error()})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Product not found or quality not updated"})
+		return
+	}
+
+	//hapus repair item
+	if err := tx.Delete(&repair_item).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal menghapus repair item", "error": err.Error()})
+		return
+	}
+
+	//cek jika sisa product 0 maka hapus document
+	remainingItems := len(migrate_doc.MigrateRepairItem) - 1
+	if remainingItems == 0 {
+		if err := tx.Delete(&migrate_doc).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal menghapus repair document", "error": err.Error()})
+			return
+		}
+	}
+
+	//commit
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(500, gin.H{
+			"success": false,
+			"message": "Commit gagal",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Repair Item berhasil di hapus",
+	})
+}
+
 func DetailMigrateRepairDocs(c *gin.Context) {
 	id := c.Param("id")
 
@@ -1271,10 +1513,11 @@ func ListMigrateProducts(c *gin.Context) {
 	baseQuery := config.DB.Model(&models.Product{}).
         Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Where("products.status IN ?", []string{"display", "expired"}).
+        Where("products.status NOT IN ?", []string{"dump", "migrate", "scrap_qcd", "sale", "repair"}).
         Where("products.category_id IS NOT NULL").
         Where("products.tag_color_id IS NULL").
         Where("products.quality = ?", "lolos").
+		Where("NOT EXISTS (SELECT 1 FROM migrate_repair_items mri WHERE mri.product_id = products.id)").
         Where("(categories.name_category LIKE ?)", "%"+ "ELEKTRONIK" +"%")
 
 	// Searching (misalnya, mencari berdasarkan nama atau email)
@@ -1419,7 +1662,7 @@ func AddMigrateProduct(c *gin.Context) {
 		Where("category_id IS NOT NULL").
 		Where("barcode = ?", payload.Barcode).
 		Where("quality = ?", "lolos").
-		Where("status IN ?", []string{"display", "expired"}).
+		Where("status NOT IN ?", []string{"dump", "migrate", "scrap_qcd", "sale", "repair"}).
 		First(&product).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -1999,8 +2242,8 @@ func GetScrapDocuments(c *gin.Context) {
         CodeDocument  string    `json:"code_document"`
         Status        string    `json:"status"`
         TotalProduct  int64     `json:"total_product"`
-        TotalNewPrice int64     `json:"total_new_price"`
-        TotalOldPrice int64     `json:"total_old_price"`
+        TotalNewPrice float64     `json:"total_new_price"`
+        TotalOldPrice float64     `json:"total_old_price"`
         CreatedAt     time.Time `json:"created_at"`
         UserID       uint64    `json:"user_id"`
         UserName     string    `json:"user_name"`
@@ -2087,6 +2330,115 @@ func GetScrapDocuments(c *gin.Context) {
 			"links" :		links,
 		},
 	})
+}
+
+func ExportScrapQcdDocument(c *gin.Context) {
+	doc_id := c.Param("doc_id")
+
+    var document models.ScrapDocument
+    if err := config.DB.Preload("User").First(&document, doc_id).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            c.JSON(404, gin.H{
+                "success": false,
+                "message": "Document tidak ditemukan",
+            })
+        }else {
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+        }
+        return
+    }
+
+    f := excelize.NewFile()
+    //mengubah nama sheet
+    sheet1 := "Product List"
+    f.SetSheetName("Sheet1", sheet1)
+
+    if err := services.WriteProductScrapQcd(f, sheet1, document.ID); err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal memproses " + sheet1,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    sheet2 := "Document Summary"
+    f.NewSheet(sheet2)
+
+    if err := services.WriteScrapQcdSummaryDocument(f, sheet2, document); err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal memproses " + sheet2,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    //save file
+    fileName := fmt.Sprintf("QCD_%s.xlsx", strings.ReplaceAll(document.CodeDocument, "/", "-"))
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+    downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+    c.JSON(200, gin.H{
+        "success": true,
+        "file_name": "File berhasil diunduh",
+        "download_url": downloadURL,
+    })
+}
+
+func ExportSummaryScrapQcd(c *gin.Context) {
+    f := excelize.NewFile()
+    //mengubah nama sheet
+    sheet1 := "All Products"
+    f.SetSheetName("Sheet1", sheet1)
+
+    if err := services.WriteAllProductScrapQcd(f, sheet1); err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal memproses " + sheet1,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    sheet2 := "Document Summary"
+    f.NewSheet(sheet2)
+
+    if err := services.WriteScrapQcdSummaryAllDocument(f, sheet2); err != nil {
+        c.JSON(500, gin.H{
+            "success": false,
+            "message": "Gagal memproses " + sheet2,
+            "error": err.Error(),
+        })
+        return
+    }
+
+    //save file
+    fileName := fmt.Sprintf("All_Scrap_QCD_%s.xlsx",time.Now().Format("2006-01-02"))
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+    downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+    c.JSON(200, gin.H{
+        "success": true,
+        "file_name": fileName,
+        "download_url": downloadURL,
+    })
 }
 
 func GetProductDumps(c *gin.Context) {

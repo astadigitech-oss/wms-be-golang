@@ -35,16 +35,21 @@ func RouteHandler(r *gin.Engine) {
 	protected.Use(middleware.AuthCheck())
 	{
 		/* ==================== Dashboard ==================== */
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir"}, func(rg *gin.RouterGroup) {
+			//storage-report
+			rg.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
+			rg.GET("dashboard/storage-report/export", controllers.ExportStorageReport) //DashboardController.go
+			//general-sales
+			rg.GET("dashboard/general-sales", controllers.GetGeneralSales) //DashboardController.go
+			rg.GET("dashboard/monthly-analytic-sales/export", controllers.ExportMonthlyAnalyticSales) //DashboardController.go
+			rg.GET("dashboard/yearly-analytic-sales/export", controllers.ExportYearlyAnalyticSales) //DashboardController.go
+			//analytic-sales
+			rg.GET("dashboard/monthly-analytic-sales", controllers.GetMonthlyAnalyticSale) //DashboardController.go
+			rg.GET("dashboard/yearly-analytic-sales", controllers.GetYearlyAnalyticSale) //DashboardController.go
+		})
 		//summary report all role
 		protected.GET("dashboard/summary-begin-balance", controllers.SummaryBeginBalance) //DashboardController.go
 		protected.GET("dashboard/summary-ending-balance", controllers.SummaryEndingBalance) //DashboardController.go
-		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir"}, func(rg *gin.RouterGroup) {
-			rg.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
-			rg.GET("dashboard/general-sales", controllers.GetGeneralSales) //DashboardController.go
-			rg.GET("dashboard/monthly-analytic-sales", controllers.GetMonthlyAnalyticSale) //DashboardController.go
-			rg.GET("dashboard/yearly-analytic-sales", controllers.GetYearlyAnalyticSale) //DashboardController.go
-			rg.GET("dashboard/monthly-analytic-sales/export", controllers.ExportMonthlyAnalyticSales) //DashboardController.go
-		})
 		/* ==================== Inbound Routes ==================== */
 		roleGroup(protected, []string{"Spv", "Team leader"}, func(rg *gin.RouterGroup) {
 			rg.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go
@@ -78,6 +83,7 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader"}, func(rg *gin.RouterGroup) {
 			// staging
 			rg.GET("/stagging-products", controllers.StaggingProduct) // ProductController.go
+			rg.GET("/stagging-products/export", controllers.ExportStagingProduct) // ProductController.go
 			rg.GET("/stagging/filter-products", controllers.StaggingFilterProduct) // ProductController.go
 			rg.GET("/stagging-products/:product_id/detail", controllers.StaggingProductDetail) // ProductController.go
 			rg.PUT("/products/:barcode/update", controllers.UpdateDataProduct) // ProductController.go
@@ -192,17 +198,21 @@ func RouteHandler(r *gin.Engine) {
 			//Migrate To Repair
 			rg.GET("/migrate-repair-docs", controllers.ListMigrateRepairDocs) //DocumentController.go
 			rg.GET("/migrate-repair-docs/:id", controllers.DetailMigrateRepairDocs) //DocumentController.go
+			rg.GET("/migrate-repair-index", controllers.GetMigrateRepairIndex) //DocumentController.go
 			rg.GET("/migrate-products", controllers.ListMigrateProducts) //DocumentController.go
+			rg.POST("/migrate-repair-docs/finish", controllers.MigrateRepairDone) //DocumentController.go
 			rg.POST("/migrate-products/add", controllers.AddMigrateProduct) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/update", controllers.MigrateProductUpdate) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/to-display", controllers.MigrateProductToDisplay) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/status-dump", controllers.MigrateProductToDump) //DocumentController.go
 			rg.POST("/migrate-products/:barcode/so", controllers.SoProductMigrateRepair) //SOController.go
+			rg.DELETE("/migrate-repair-docs/items/:item_id", controllers.DeleteMigrateRepairItem) //DocumentController.go
 		})
 
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Reparasi"}, func(rg *gin.RouterGroup) {
 			//Abnormal
 			rg.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
+			rg.GET("/products/abnormal/export", controllers.ExportAbnormalProduct) //ProductController.go
 			rg.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
 			rg.POST("/products/abnormal/:barcode/so", controllers.SoProductAbnormal) //SOController.go
 			//Damaged
@@ -215,6 +225,8 @@ func RouteHandler(r *gin.Engine) {
 
 			//RepairDocument (route for document damaged & non)
 			rg.GET("/repair/:type/documents/", controllers.GetRepairDocuments) //ProductController.go
+			rg.GET("/repair/:type/documents/:doc_id/export", controllers.ExportRepairDocument) //ProductController.go
+			rg.GET("/repair/:type/documents/export", controllers.ExportAllProductRepairByType) //ProductController.go
 			rg.GET("repair/:type/documents/:doc_id", controllers.DetailRepairDocuments) //ProductController.go
 			rg.GET("repair/:type/document/active-session", controllers.GetActiveSessionRepairDoc) //ProductController.go
 			rg.POST("repair/document/repair-all", controllers.AddAllProductToRepairDocument) //ProductController.go
@@ -288,6 +300,8 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Reparasi"}, func(rg *gin.RouterGroup) {
 			//QCD
 			rg.GET("scraps", controllers.GetScrapDocuments) //DocumentController.go
+			rg.GET("scraps/documents/:doc_id/export", controllers.ExportScrapQcdDocument) //DocumentController.go
+			rg.GET("scraps/summary/export", controllers.ExportSummaryScrapQcd) //DocumentController.go
 			rg.GET("scraps/:scrap_id", controllers.DetailScrapDocuments) //DocumentController.go
 			rg.GET("scrap/product-dumps", controllers.GetProductDumps) //DocumentController.go
 			rg.GET("scrap/session", controllers.GetActiveSession) //DocumentController.go

@@ -7,7 +7,9 @@ import (
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 
 	// "fmt"
 	"math"
@@ -21,7 +23,6 @@ import (
 )
 
 type categoryAggregate struct {
-	CategoryID          uint64  `json:"category_id"`
 	CategoryName        string  `json:"category_name"`
 	TotalProduct        int64   `json:"total_product"`
 	TotalPrice          float64 `json:"total_price"`
@@ -106,168 +107,262 @@ type yearlyAnalyticSaleResponse struct {
 // ===================== route handler ============================
 //storage report
 func GetStorageReport(c *gin.Context) {
-	db := config.DB
-	now := time.Now()
-	staging := "staging"
-
-	var (
-		displayMain        []categoryAggregate
-		displayStaging     []categoryAggregate
-		slowMoving         []categoryAggregate
-		colorTags          []colorTagAggregate
-		dumpProducts       []categoryAggregate
-		scrapProducts      []categoryAggregate
-
-		totalInventory		int64
-		totalStaging		int64
-		totalSlowMoving		int64
-		totalDump			int64
-		totalColor			int64
-		totalScrap			int64
-		
-		priceInventory		float64
-		priceStaging		float64
-		priceSlowMoving		float64
-		priceDump			float64
-		priceColor			float64
-		priceScrap			float64
-
-	)
-
-	wg := sync.WaitGroup{}
-	errCh := make(chan error, 6)
-
-	wg.Add(6)
-
-	//get total product per category di inventory
-	go func() {
-		defer wg.Done()
-		res, err := queryInventoryAggregate(db)
-		displayMain = res
-		if err != nil { errCh <- err }
-
-		totalInventory, priceInventory = sumAggCategory(res)
-	}()
-
-	//get total product per category di staging
-	go func() {
-		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging)
-		displayStaging = res
-		if err != nil { errCh <- err }
-
-		totalStaging, priceStaging = sumAggCategory(res)
-	}()
-
-	//get total product per category by status dump
-	go func() {
-		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"dump"}, "lolos", nil)
-		dumpProducts = res
-		if err != nil { errCh <- err }
-
-		totalDump, priceDump = sumAggCategory(res)
-	}()
-
-	//get total product per category by status scrap
-	go func() {
-		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"scrap_qcd"}, "lolos", nil)
-		scrapProducts = res
-		if err != nil { errCh <- err }
-
-		totalScrap, priceScrap = sumAggCategory(res)
-	}()
-
-	//get total product per category by status slow_moving
-	go func() {
-		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"slow_moving"}, "lolos", nil)
-		slowMoving = res
-		if err != nil { errCh <- err }
-
-		totalSlowMoving, priceSlowMoving = sumAggCategory(res)
-	}()
-
-	//get total product per color
-	go func() {
-		defer wg.Done()
-		res, err := queryColorTagAggregate(db, "lolos")
-		colorTags = res
-		if err != nil { errCh <- err }
-
-		totalColor, priceColor = sumAggColor(res)
-	}()
-
-	wg.Wait()
-	close(errCh)
-
-	for err := range errCh {
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"message": err.Error(),
+	defer func() {
+        if r := recover(); r != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false, 
+				"message": "Internal server error",
+				"error": fmt.Sprintf("%v", r),
 			})
-			return
-		}
-	}
+        }
+    }()
 
-	totalAll := totalInventory + totalStaging + totalSlowMoving + totalDump + totalScrap + totalColor
-	totalPriceAll := priceInventory + priceStaging + priceSlowMoving + priceDump + priceScrap + priceColor
-	
-	percentageProductDisplay := percent(float64(totalInventory), float64(totalAll))
-	percentageProductDisplayPrice := percent(float64(priceInventory), float64(totalPriceAll))
-	percentageProductStaging := percent(float64(totalStaging), float64(totalAll))
-	percentageProductStagingPrice := percent(float64(priceStaging), float64(totalPriceAll))
-	percentageProductSlowMoving := percent(float64(totalSlowMoving), float64(totalAll))
-	percentageProductSlowMovingPrice := percent(float64(priceSlowMoving), float64(totalPriceAll))
-	percentageProductDump := percent(float64(totalDump), float64(totalAll))
-	percentageProductDumpPrice := percent(float64(priceDump), float64(totalPriceAll))
-	percentageProductScrap := percent(float64(totalScrap), float64(totalAll))
-	percentageProductScrapPrice := percent(float64(priceScrap), float64(totalPriceAll))
-	tagProducts := mapColorTagReport(colorTags, totalAll, totalPriceAll)
+	resource, err := storageReport()
+	if err != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Failed to retrieve storage report", "error": err.Error()})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Laporan Data Perkategori",
-		"data": gin.H{
-			"month": gin.H{
-				"month": now.Format("January"),
-				"year":  now.Year(),
-			},
-			"chart": gin.H{
-				"inventory":    displayMain,
-				"staging": displayStaging,
-				"slow_moving": slowMoving,
-				"dump":    dumpProducts,
-				"scrap":   scrapProducts,
-			},
-			"color_tags": tagProducts,
-			"total_all_product": totalAll,
-			"total_all_price":   totalPriceAll,
-			"total_percentage_product":  percent(float64(totalAll), float64(totalAll)),
-			"total_percentage_price":   percent(float64(totalPriceAll), float64(totalPriceAll)),
-			"total_display": totalInventory,
-			"total_display_price": priceInventory,
-			"percentage_display":   percentageProductDisplay,
-			"percentage_display_price": percentageProductDisplayPrice,
-			"total_staging": totalStaging,
-			"total_staging_price": priceStaging,
-			"percentage_staging":   percentageProductStaging,
-			"percentage_staging_price": percentageProductStagingPrice,
-			"total_slow_moving": totalSlowMoving,
-			"total_slow_moving_price": priceSlowMoving,
-			"percentage_slow_moving":   percentageProductSlowMoving,
-			"percentage_slow_moving_price": percentageProductSlowMovingPrice,
-			"total_dump": totalDump,
-			"total_dump_price": priceDump,
-			"percentage_dump":   percentageProductDump,
-			"percentage_dump_price": percentageProductDumpPrice,
-			"total_scrap": totalScrap,
-			"total_scrap_price": priceScrap,
-			"percentage_scrap":   percentageProductScrap,
-			"percentage_scrap_price": percentageProductScrapPrice,
+		"resource": resource,
+	})
+}
+
+type summary struct {
+	TotalAllProduct        int64
+	TotalAllPrice          float64
+	TotalProductInventory  int64
+	PriceInventory         float64
+	TotalProductStaging    int64
+	PriceStaging           float64
+	TotalProductColor      int64
+	PriceColor             float64
+}
+
+func ExportStorageReport(c *gin.Context) {
+	defer func() {
+        if r := recover(); r != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false, 
+				"message": "Internal server error",
+				"error": fmt.Sprintf("%v", r),
+			})
+        }
+    }()
+
+	resource, err := storageReport()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to retrieve storage report", "error": err.Error()})
+		return
+	}
+
+	inventories := resource["chart"].(map[string]interface{})["inventories"].([]categoryAggregate)
+	stagings := resource["chart"].(map[string]interface{})["stagings"].([]categoryAggregate)
+	colors := resource["color_tags"].([]colorTagAggregate)
+	
+	var totalProductColor int64
+	var totalPriceColor float64
+	for _, item := range colors {
+		totalProductColor += item.TotalProduct
+		totalPriceColor += item.TotalPrice
+	}
+	summary := summary{
+		TotalAllProduct:       resource["total_all_product"].(int64),
+		TotalAllPrice:         resource["total_all_price"].(float64),
+		TotalProductInventory: resource["total_display"].(int64),
+		PriceInventory:       resource["total_display_price"].(float64),
+		TotalProductStaging:  resource["total_staging"].(int64),
+		PriceStaging:        resource["total_staging_price"].(float64),
+		TotalProductColor:   totalProductColor,
+		PriceColor:         totalPriceColor,
+	}
+	
+
+	f := excelize.NewFile()
+
+	// INVENTORIES SHEET
+	createCategorySheet(f, "Inventories", inventories)
+
+	// STAGINGS SHEET
+	createCategorySheet(f, "Stagings", stagings)
+
+	// COLORS SHEET
+	createColorSheet(f, "Colors", colors)
+
+	// SUMMARY SHEET
+	createSummarySheet(f, "Summary", summary)
+
+	// Hapus default sheet
+	f.DeleteSheet("Sheet1")
+
+	fileName := "storage-report.xlsx"
+	dir := "./public/exports/storage-report"
+	os.MkdirAll(dir, 0755)
+	fullPath := filepath.Join(dir, fileName)
+
+	if err := f.SaveAs(fullPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Failed to save file",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/storage-report/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"url":     downloadURL,
+	})
+}
+func ExportArchiveStorageReport(c *gin.Context) {
+	var indonesianMonths = []string{
+		"Januari", "Februari", "Maret", "April", "Mei", "Juni",
+		"Juli", "Agustus", "September", "Oktober", "November", "Desember",
+	}
+
+	var types = []string{"type1", "type2", "color"}
+
+	var displayNames = map[string]string{
+		"type1": "Inventories",
+		"type2": "Stagings",
+		"color": "Colors",
+	}
+
+	db := config.DB
+
+	year := c.DefaultQuery("year", fmt.Sprintf("%d", time.Now().Year()))
+	month := c.Query("month")
+
+	var months []string
+	if month != "" {
+		mInt := parseMonth(month)
+		months = []string{indonesianMonths[mInt-1]}
+	} else {
+		months = indonesianMonths
+	}
+
+	fileName := fmt.Sprintf("storage-report-%s.xlsx", year)
+	publicPath := "public/reports"
+	os.MkdirAll(publicPath, os.ModePerm)
+	fullPath := filepath.Join(publicPath, fileName)
+
+	f := excelize.NewFile()
+	sheet := "Storage Report"
+	f.SetSheetName("Sheet1", sheet)
+
+	// ======================
+	// TITLE
+	// ======================
+	f.MergeCell(sheet, "A1", "M1")
+	f.SetCellValue(sheet, "A1", "STORAGE REPORT - "+year)
+
+	styleTitle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 14},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
 		},
+	})
+	f.SetCellStyle(sheet, "A1", "A1", styleTitle)
+
+	// ======================
+	// TOTAL ITEM
+	// ======================
+	f.MergeCell(sheet, "A4", "C4")
+	f.SetCellValue(sheet, "A4", "TOTAL ITEM")
+	f.SetCellValue(sheet, "A5", "Storage Type")
+
+	col := 2
+	for _, m := range months {
+		cell, _ := excelize.CoordinatesToCellName(col, 5)
+		f.SetCellValue(sheet, cell, m)
+		col++
+	}
+
+	row := 6
+	for _, t := range types {
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), displayNames[t])
+
+		col = 2
+		for _, m := range months {
+			englishMonth := convertToEnglishMonth(m)
+
+			var total int64
+			query := db.Table("archive_storages").
+				Where("year = ? AND month = ?", year, englishMonth)
+
+			if t == "type1" {
+				query = query.Where("(type = ? OR type IS NULL)", "type1")
+				query.Select("COALESCE(SUM(total_category),0)").Scan(&total)
+			} else if t == "color" {
+				query = query.Where("type = ?", "color")
+				query.Select("COALESCE(SUM(total_color),0)").Scan(&total)
+			} else {
+				query = query.Where("type = ?", t)
+				query.Select("COALESCE(SUM(total_category),0)").Scan(&total)
+			}
+
+			cell, _ := excelize.CoordinatesToCellName(col, row)
+			if total > 0 {
+				f.SetCellValue(sheet, cell, total)
+			}
+			col++
+		}
+		row++
+	}
+
+	// ======================
+	// TOTAL VALUE
+	// ======================
+	f.MergeCell(sheet, "A9", "C9")
+	f.SetCellValue(sheet, "A9", "TOTAL VALUE")
+	f.SetCellValue(sheet, "A10", "Storage Type")
+
+	col = 2
+	for _, m := range months {
+		cell, _ := excelize.CoordinatesToCellName(col, 10)
+		f.SetCellValue(sheet, cell, m)
+		col++
+	}
+
+	row = 11
+	for _, t := range types {
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), displayNames[t])
+
+		col = 2
+		for _, m := range months {
+			englishMonth := convertToEnglishMonth(m)
+
+			var totalValue float64
+			query := db.Table("archive_storages").
+				Where("year = ? AND month = ?", year, englishMonth)
+
+			if t == "type1" {
+				query = query.Where("(type = ? OR type IS NULL)", "type1")
+			} else {
+				query = query.Where("type = ?", t)
+			}
+
+			query.Select("COALESCE(SUM(value_product),0)").Scan(&totalValue)
+
+			cell, _ := excelize.CoordinatesToCellName(col, row)
+			if totalValue > 0 {
+				f.SetCellValue(sheet, cell, totalValue)
+			}
+			col++
+		}
+		row++
+	}
+
+	f.SaveAs(fullPath)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"filename": fileName,
 	})
 }
 
@@ -689,7 +784,266 @@ func SummaryEndingBalance(c *gin.Context) {
 
 
 //======================== helper =================================
+//storage-report
+func storageReport() (map[string]interface{}, error) {
+	db := config.DB
+	now := time.Now()
+	staging := "staging"
 
+	var (
+		displayMain        []categoryAggregate
+		displayStaging     []categoryAggregate
+		slowMoving         []categoryAggregate
+		colorTags          []colorTagAggregate
+		dumpProducts       []categoryAggregate
+		scrapProducts      []categoryAggregate
+		b2bProducts        []categoryAggregate
+
+		totalInventory		int64
+		totalStaging		int64
+		totalSlowMoving		int64
+		totalDump			int64
+		totalColor			int64
+		totalScrap			int64
+		totalB2B			int64
+
+		priceInventory		float64
+		priceStaging		float64
+		priceSlowMoving		float64
+		priceDump			float64
+		priceColor			float64
+		priceScrap			float64
+		priceB2B			float64
+
+	)
+
+	wg := sync.WaitGroup{}
+	errCh := make(chan error, 6)
+
+	wg.Add(7)
+
+	//get total product per category di inventory
+	go func() {
+		defer wg.Done()
+		res, err := queryInventoryAggregate(db)
+		displayMain = res
+		if err != nil { errCh <- err }
+
+		totalInventory, priceInventory = sumAggCategory(res)
+	}()
+
+	//get total product per category di staging
+	go func() {
+		defer wg.Done()
+		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging)
+		displayStaging = res
+		if err != nil { errCh <- err }
+
+		totalStaging, priceStaging = sumAggCategory(res)
+	}()
+
+	//get total product per category di b2b
+	go func() {
+		defer wg.Done()
+		res, err := queryB2BAggregate(db)
+		b2bProducts = res
+		if err != nil { errCh <- err }
+
+		totalB2B, priceB2B = sumAggCategory(res)
+	}()
+
+	//get total product per category by status dump
+	go func() {
+		defer wg.Done()
+		res, err := queryCategoryAggregate(db, []string{"dump"}, "lolos", nil)
+		dumpProducts = res
+		if err != nil { errCh <- err }
+
+		totalDump, priceDump = sumAggCategory(res)
+	}()
+
+	//get total product per category by status scrap
+	go func() {
+		defer wg.Done()
+		res, err := queryCategoryAggregate(db, []string{"scrap_qcd"}, "lolos", nil)
+		scrapProducts = res
+		if err != nil { errCh <- err }
+
+		totalScrap, priceScrap = sumAggCategory(res)
+	}()
+
+	//get total product per category by status slow_moving
+	go func() {
+		defer wg.Done()
+		res, err := queryCategoryAggregate(db, []string{"slow_moving"}, "lolos", nil)
+		slowMoving = res
+		if err != nil { errCh <- err }
+
+		totalSlowMoving, priceSlowMoving = sumAggCategory(res)
+	}()
+
+	//get total product per color
+	go func() {
+		defer wg.Done()
+		res, err := queryColorTagAggregate(db, "lolos")
+		colorTags = res
+		if err != nil { errCh <- err }
+
+		totalColor, priceColor = sumAggColor(res)
+	}()
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		return nil, err
+	}
+
+	totalAll := totalInventory + totalStaging + totalSlowMoving + totalDump + totalScrap + totalColor
+	totalPriceAll := priceInventory + priceStaging + priceSlowMoving + priceDump + priceScrap + priceColor
+
+	percentageProductDisplay := percent(float64(totalInventory), float64(totalAll))
+	percentageProductDisplayPrice := percent(float64(priceInventory), float64(totalPriceAll))
+	percentageProductStaging := percent(float64(totalStaging), float64(totalAll))
+	percentageProductStagingPrice := percent(float64(priceStaging), float64(totalPriceAll))
+	percentageProductB2B := percent(float64(totalB2B), float64(totalAll + totalB2B))
+	percentageProductB2BPrice := percent(float64(priceB2B), float64(totalPriceAll + priceB2B))
+	percentageProductSlowMoving := percent(float64(totalSlowMoving), float64(totalAll))
+	percentageProductSlowMovingPrice := percent(float64(priceSlowMoving), float64(totalPriceAll))
+	percentageProductDump := percent(float64(totalDump), float64(totalAll))
+	percentageProductDumpPrice := percent(float64(priceDump), float64(totalPriceAll))
+	percentageProductScrap := percent(float64(totalScrap), float64(totalAll))
+	percentageProductScrapPrice := percent(float64(priceScrap), float64(totalPriceAll))
+	tagProducts := mapColorTagReport(colorTags, totalAll, totalPriceAll)
+
+	data := map[string]interface{}{
+		"month": map[string]interface{}{
+			"month": now.Format("January"),
+			"year":  now.Year(),
+		},
+		"chart": map[string]interface{}{
+			"inventories":   displayMain,
+			"stagings":     displayStaging,
+			"b2bs":         b2bProducts,
+			"slow_movings": slowMoving,
+			"dumps":       dumpProducts,
+			"scraps":      scrapProducts,
+		},
+		"color_tags": tagProducts,
+
+		"total_all_product":        totalAll,
+		"total_all_price":          totalPriceAll,
+		"total_percentage_product": percent(float64(totalAll), float64(totalAll)),
+		"total_percentage_price":   percent(float64(totalPriceAll), float64(totalPriceAll)),
+
+		"total_display":               totalInventory,
+		"total_display_price":         priceInventory,
+		"percentage_display":          percentageProductDisplay,
+		"percentage_display_price":    percentageProductDisplayPrice,
+
+		"total_staging":               totalStaging,
+		"total_staging_price":         priceStaging,
+		"percentage_staging":          percentageProductStaging,
+		"percentage_staging_price":    percentageProductStagingPrice,
+
+		"total_product_b2b":           totalB2B,
+		"total_product_b2b_price":     priceB2B,
+		"percentage_product_b2b":      percentageProductB2B,
+		"percentage_product_b2b_price": percentageProductB2BPrice,
+
+		"total_slow_moving":           totalSlowMoving,
+		"total_slow_moving_price":     priceSlowMoving,
+		"percentage_slow_moving":      percentageProductSlowMoving,
+		"percentage_slow_moving_price": percentageProductSlowMovingPrice,
+
+		"total_dump":                  totalDump,
+		"total_dump_price":            priceDump,
+		"percentage_dump":             percentageProductDump,
+		"percentage_dump_price":       percentageProductDumpPrice,
+
+		"total_scrap":                 totalScrap,
+		"total_scrap_price":           priceScrap,
+		"percentage_scrap":            percentageProductScrap,
+		"percentage_scrap_price":      percentageProductScrapPrice,
+	}
+
+	return data, nil
+
+}
+
+func createCategorySheet(f *excelize.File, sheetName string, data []categoryAggregate) {
+	f.NewSheet(sheetName)
+
+	headers := []string{"Category Name", "Total Product", "Value Product"}
+
+	for col, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(col+1, 1)
+		f.SetCellValue(sheetName, cell, h)
+	}
+
+	for row, d := range data {
+		r := row + 2
+		f.SetCellValue(sheetName, fmt.Sprintf("A%d", r), d.CategoryName)
+		f.SetCellValue(sheetName, fmt.Sprintf("B%d", r), d.TotalProduct)
+		f.SetCellValue(sheetName, fmt.Sprintf("C%d", r), d.TotalPrice)
+	}
+}
+
+func createColorSheet(f *excelize.File, sheetName string, data []colorTagAggregate) {
+	f.NewSheet(sheetName)
+
+	headers := []string{"Category Name", "Total Product", "Value Product"}
+
+	for col, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(col+1, 1)
+		f.SetCellValue(sheetName, cell, h)
+	}
+
+	for row, d := range data {
+		r := row + 2
+		f.SetCellValue(sheetName, fmt.Sprintf("A%d", r), d.NameColor)
+		f.SetCellValue(sheetName, fmt.Sprintf("B%d", r), d.TotalProduct)
+		f.SetCellValue(sheetName, fmt.Sprintf("C%d", r), d.TotalPrice)
+	}
+}
+
+func createSummarySheet(f *excelize.File, sheetName string, s summary) {
+	f.NewSheet(sheetName)
+
+	headers := []string{
+		"total_all_product",
+		"total_all_price",
+		"total_product_inventory",
+		"price_inventory",
+		"total_product_staging",
+		"price_staging",
+		"total_product_color",
+		"price_color",
+	}
+
+	values := []interface{}{
+		s.TotalAllProduct,
+		s.TotalAllPrice,
+		s.TotalProductInventory,
+		s.PriceInventory,
+		s.TotalProductStaging,
+		s.PriceStaging,
+		s.TotalProductColor,
+		s.PriceColor,
+	}
+
+	for col, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(col+1, 1)
+		f.SetCellValue(sheetName, cell, h)
+	}
+
+	for col, v := range values {
+		cell, _ := excelize.CoordinatesToCellName(col+1, 2)
+		f.SetCellValue(sheetName, cell, v)
+	}
+}
+
+//general sale
 func prepareExportMonthlyAnalyticSales(db *gorm.DB, from, to string) (string, error) {
 
 	response, err := monthlyAnalyticSales(db, from, to)
@@ -787,7 +1141,6 @@ func prepareExportYearlyAnalyticSales(db *gorm.DB, year string) (string, error) 
 	downloadURL := fmt.Sprintf("%s/public/exports/general-sale/%s", os.Getenv("APP_URL"), fileName)
 	return downloadURL, nil
 }
-
 
 func monthlyAnalyticSales(db *gorm.DB, from, to string) (monthlyAnalyticSaleResponse, error) {
 
@@ -902,7 +1255,7 @@ func monthlyAnalyticSales(db *gorm.DB, from, to string) (monthlyAnalyticSaleResp
 		Select(`
 			product_category,
 			COUNT(product_category) as total_category,
-			SUM(product_old_price) as display_price_sale,
+			SUM(product_old_price) as display_price,
 			SUM(product_price_sale) as purchase
 		`).
 		Where("status_sale = ?", "selesai").
@@ -918,7 +1271,7 @@ func monthlyAnalyticSales(db *gorm.DB, from, to string) (monthlyAnalyticSaleResp
 	err = db.Table("sales").
 		Select(`
 			COUNT(product_category) as total_category,
-			SUM(product_old_price) as display_price_sale,
+			SUM(product_old_price) as display_price,
 			SUM(product_price_sale) as purchase
 		`).Where("status_sale = ?", "selesai").
 		Where("created_at BETWEEN ? AND ?", fromDate, toDate).
@@ -1029,7 +1382,7 @@ func yearlyAnalyticSales(db *gorm.DB, yearInput string) (yearlyAnalyticSaleRespo
         Select(`
             product_category,
             COUNT(product_category) as total_category,
-            SUM(product_old_price) as display_price_sale,
+            SUM(product_old_price) as display_price,
             SUM(product_price_sale) as purchase
         `).
         Where("status_sale = ?", "selesai").
@@ -1061,8 +1414,6 @@ func yearlyAnalyticSales(db *gorm.DB, yearInput string) (yearlyAnalyticSaleRespo
 
 	return response, nil
 }
-
-
 
 func percent(v, t float64) float64 {
 	if t == 0 {
@@ -1145,6 +1496,29 @@ func queryColorTagAggregate(db *gorm.DB, quality string) ([]colorTagAggregate, e
 	return result, err
 }
 
+func queryB2BAggregate(db *gorm.DB) ([]categoryAggregate, error) {
+	var results []categoryAggregate
+
+	err := db.
+		Table("bulky_sales bs").
+		Select(`
+			bs.product_category AS category_name,
+			COUNT(bs.id) AS total_product,
+			SUM(bs.after_price_bulky_sale) AS total_price
+		`).
+		Joins(`JOIN bulky_documents ON bulky_documents.id = bs.bulky_document_id`).
+		Where("bulky_documents.status_bulky = ?", "selesai").
+		Where("bs.product_category IS NOT NULL").
+		Group("bs.product_category").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
 func queryCategoryAggregate(
 	db *gorm.DB,
 	status []string,
@@ -1157,7 +1531,6 @@ func queryCategoryAggregate(
 	q := db.
 		Table("products p").
 		Select(`
-			c.id AS category_id,
 			c.name_category AS category_name,
 			COUNT(p.id) AS total_product,
 			COALESCE(SUM(p.price),0) AS total_price
@@ -1185,7 +1558,6 @@ func queryInventoryAggregate(db *gorm.DB) ([]categoryAggregate, error) {
 
 	query := `
 		SELECT
-			category_id,
 			category_name,
 			SUM(total_product) AS total_product,
 			SUM(total_price) AS total_price
@@ -1243,4 +1615,31 @@ func parseFlexibleDate(input string, loc *time.Location) (time.Time, error) {
         input,
     )
 }
+
+func convertToEnglishMonth(indonesian string) string {
+	months := map[string]string{
+		"Januari":   "January",
+		"Februari":  "February",
+		"Maret":     "March",
+		"April":     "April",
+		"Mei":       "May",
+		"Juni":      "June",
+		"Juli":      "July",
+		"Agustus":   "August",
+		"September": "September",
+		"Oktober":   "October",
+		"November":  "November",
+		"Desember":  "December",
+	}
+	return months[indonesian]
+}
+
+func parseMonth(month string) int {
+	m, err := strconv.Atoi(month)
+	if err != nil || m < 1 || m > 12 {
+		return int(time.Now().Month())
+	}
+	return m
+}
+
 
