@@ -58,6 +58,10 @@ func RouteHandler(r *gin.Engine) {
 			rg.POST("/bulking/product/category", controllers.ImportBulkingCategory) //BulkingController.go
 			rg.POST("/bulking/product/color", controllers.ImportBulkingColor) //BulkingController.go
 		})
+		//inbund SKU
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir", "Crew", "Reparasi", "Kasir Leader", "Developer"}, func(rg *gin.RouterGroup) {
+			rg.POST("/sku/upload", controllers.ProcessExcelHandler) // GenerateController.go
+		})
 
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
 			// Manifest Inbound Routes

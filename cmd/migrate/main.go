@@ -80,6 +80,10 @@ var Tables = []interface{}{
 	&models.RepairDocument{},
 	&models.RepairDocumentItem{},
 	&models.DailyInventorySnapshot{},
+	&models.ArchiveStorage{},
+	&models.RackHistory{},
+	&models.SummaryInbound{},
+	&models.SummaryOutbound{},
 }
 
 

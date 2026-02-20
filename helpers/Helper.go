@@ -5,6 +5,9 @@ import (
 	"liquid8/wms/config"
 	"liquid8/wms/models"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 
 	"context"
 	"encoding/json"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -509,7 +513,6 @@ func GenerateBulkyCode(tx *gorm.DB) (string, error) {
 
 	return code, nil
 }
-
 
 func RecalculateRack(db *gorm.DB, rackID uint64) error {
 
@@ -1182,5 +1185,37 @@ func reverse(s string) string {
     return string(r)
 }
 
+// ========================== Helper logger =====================
+func NewLogger(path string) *logrus.Logger {
+	log := logrus.New()
+
+	// pastikan folder ada
+	os.MkdirAll(filepath.Dir(path), os.ModePerm)
+
+	file, err := os.OpenFile(
+		path,
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0666,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	log.SetOutput(file)
+	log.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
+	log.SetLevel(logrus.InfoLevel)
+
+	return log
+}
+
+// Helper untuk cek memory usage
+func GetMemoryUsageMB() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.Alloc / 1024 / 1024
+}
 
 

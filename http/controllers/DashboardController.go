@@ -971,6 +971,111 @@ func storageReport() (map[string]interface{}, error) {
 
 }
 
+type StorageReportArchive struct {
+	Inventories      []categoryAggregate
+	Staging          []categoryAggregate
+	SlowMoving       []categoryAggregate
+	TagProducts      []colorTagAggregate
+	Month            string
+	Year             int
+}
+
+func StorageReportForArchive() (*StorageReportArchive, error) {
+	db := config.DB
+	now := time.Now()
+	staging := "staging"
+
+	var (
+		displayMain        []categoryAggregate
+		displayStaging     []categoryAggregate
+		slowMoving         []categoryAggregate
+		colorTags          []colorTagAggregate
+
+		totalInventory		int64
+		totalStaging		int64
+		totalSlowMoving		int64
+		totalColor			int64
+
+		priceInventory		float64
+		priceStaging		float64
+		priceSlowMoving		float64
+		priceColor			float64
+
+	)
+
+	wg := sync.WaitGroup{}
+	errCh := make(chan error, 4)
+
+	wg.Add(4)
+
+	//get total product per category di inventory
+	go func() {
+		defer wg.Done()
+		res, err := queryInventoryAggregate(db)
+		displayMain = res
+		if err != nil { errCh <- err }
+
+		totalInventory, priceInventory = sumAggCategory(res)
+	}()
+
+	//get total product per category di staging
+	go func() {
+		defer wg.Done()
+		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging)
+		displayStaging = res
+		if err != nil { errCh <- err }
+
+		totalStaging, priceStaging = sumAggCategory(res)
+	}()
+
+	//get total product per category by status slow_moving
+	go func() {
+		defer wg.Done()
+		res, err := queryCategoryAggregate(db, []string{"slow_moving"}, "lolos", nil)
+		slowMoving = res
+		if err != nil { errCh <- err }
+
+		totalSlowMoving, priceSlowMoving = sumAggCategory(res)
+	}()
+
+	//get total product per color
+	go func() {
+		defer wg.Done()
+		res, err := queryColorTagAggregate(db, "lolos")
+		colorTags = res
+		if err != nil { errCh <- err }
+
+		totalColor, priceColor = sumAggColor(res)
+	}()
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		return nil, err
+	}
+
+	totalAll := totalInventory + totalStaging + totalSlowMoving + totalColor
+	totalPriceAll := priceInventory + priceStaging + priceSlowMoving + priceColor
+
+	// percentageProductDisplay := percent(float64(totalInventory), float64(totalAll))
+	// percentageProductDisplayPrice := percent(float64(priceInventory), float64(totalPriceAll))
+	// percentageProductStaging := percent(float64(totalStaging), float64(totalAll))
+	// percentageProductStagingPrice := percent(float64(priceStaging), float64(totalPriceAll))
+	// percentageProductSlowMoving := percent(float64(totalSlowMoving), float64(totalAll))
+	// percentageProductSlowMovingPrice := percent(float64(priceSlowMoving), float64(totalPriceAll))
+	tagProducts := mapColorTagReport(colorTags, totalAll, totalPriceAll)
+
+	return &StorageReportArchive{
+		Inventories: displayMain,
+		Staging:     displayStaging,
+		SlowMoving: slowMoving,
+		TagProducts: tagProducts,
+		Month:       now.Format("January"),
+		Year:        now.Year(),
+	}, nil
+}
+
 func createCategorySheet(f *excelize.File, sheetName string, data []categoryAggregate) {
 	f.NewSheet(sheetName)
 
