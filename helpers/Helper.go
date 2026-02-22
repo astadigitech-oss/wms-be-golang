@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 
 	"context"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -193,6 +195,55 @@ func GenerateCodeDocument(db *gorm.DB) (string, error) {
 			WithContext(context.Background()).
 			Model(&models.Document{}).
 			Where("code = ?", barcode).
+			Where("document_product_type = ?", "reguler").
+			Count(&count).
+			Error
+
+		if err != nil {
+			return "", err
+		}
+
+		// --- jika belum digunakan, selesai ---
+		if count == 0 {
+			return barcode, nil
+		}
+	}
+
+	// --- jika gagal setelah banyak percobaan ---
+	return "", errors.New("failed to generate unique code after max retries")
+}
+
+func GenerateCodeDocumentSKU(db *gorm.DB) (string, error) {
+	const (
+		length   = 4
+		maxRetry = 10
+	)
+
+	now := time.Now()
+	datePart := fmt.Sprintf("%02d%04d", int(now.Month()), now.Year())
+
+	//ambil MAX(id)
+	// var nextID int64
+	// err := db.Model(&models.Product{}).
+	// 	Select("COALESCE(MAX(id), 0) + 1").
+	// 	Scan(&nextID).Error
+	// if err != nil {
+	// 	return "", err
+	// }
+
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+
+		// --- generate random alphanumeric ---
+		random := RandomString(length)
+		barcode := fmt.Sprintf("SKU%s%s", datePart, random)
+
+		// --- cek apakah barcode sudah ada di DB ---
+		var count int64
+		err := db.
+			WithContext(context.Background()).
+			Model(&models.Document{}).
+			Where("code = ?", barcode).
+			Where("document_product_type = ?", "sku").
 			Count(&count).
 			Error
 
@@ -1218,4 +1269,81 @@ func GetMemoryUsageMB() uint64 {
 	return m.Alloc / 1024 / 1024
 }
 
+func FlexibleNormalize(input string) string {
+	s := strings.TrimSpace(input)
+
+	// regex untuk detect pure currency/number
+	// contoh yang match:
+	// Rp14,000
+	// 10,000
+	// 14000
+	currencyPattern := regexp.MustCompile(`^(?i)\s*rp?\s?[\d.,]+\s*$`)
+
+	if currencyPattern.MatchString(s) {
+		// hapus Rp (case insensitive)
+		reRp := regexp.MustCompile(`(?i)rp`)
+		s = reRp.ReplaceAllString(s, "")
+
+		// hapus spasi
+		s = strings.TrimSpace(s)
+
+		// hapus separator ribuan
+		s = strings.ReplaceAll(s, ",", "")
+		s = strings.ReplaceAll(s, ".", "")
+
+		return s
+	}
+
+	// kalau bukan pure angka/currency → biarkan
+	return s
+}
+
+func ErrorResponse(c *gin.Context, status int, message string, err error) {
+
+	response := gin.H{
+		"success": false,
+		"message": message,
+	}
+
+	if err != nil {
+		response["error"] = err.Error()
+	}
+
+	c.JSON(status, response)
+}
+
+//build style excel
+func BuildStyle(f *excelize.File, styles ...excelize.Style) (int, error) {
+	merged := MergeStyles(styles...)
+	return f.NewStyle(merged)
+}
+
+func MergeStyles(styles ...excelize.Style) *excelize.Style {
+	result := &excelize.Style{}
+
+	for _, s := range styles {
+
+		if s.Font != nil {
+			result.Font = s.Font
+		}
+
+		if s.Alignment != nil {
+			result.Alignment = s.Alignment
+		}
+
+		if s.Border != nil {
+			result.Border = append(result.Border, s.Border...)
+		}
+
+		if s.Fill.Type != "" {
+			result.Fill = s.Fill
+		}
+
+		if s.NumFmt != 0 {
+			result.NumFmt = s.NumFmt
+		}
+	}
+
+	return result
+}
 
