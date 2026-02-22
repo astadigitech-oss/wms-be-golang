@@ -41,7 +41,8 @@ func IndexDocuments(c *gin.Context) {
 	var documents []models.Document
 	var total int64
 
-	db := config.DB.Model(&models.Document{})
+	db := config.DB.Model(&models.Document{}).
+		Where("document_product_type = ?", "reguler")
 
 	// SEARCH: code_document OR base_document
 	if q != "" {
@@ -113,7 +114,7 @@ func DetailDocument(c *gin.Context) {
 	var total int64
 
 	db := config.DB.Model(&models.ProductOld{}).
-		Where("product_olds.code_document = ?", code_document)
+		Where("code_document = ?", code_document)
 		
 	if query != "" {
 		db = db.Where(
@@ -398,6 +399,7 @@ func ChangeCustomBarcode(c *gin.Context) {
 	result := tx.
 		Model(&models.Document{}).
 		Where("code = ?", request.CodeDocument).
+		Where("document_product_type = ?", "reguler").
 		Update("custom_barcode", request.CustomBarcode)
 
 	// ✅ Cek error

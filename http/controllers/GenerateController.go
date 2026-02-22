@@ -140,7 +140,7 @@ func worker(code_document string, headers []string, ch <-chan []string, wg *sync
         data := map[string]string{}
         for i := 0; i < len(headers); i++ {
             if i < len(row) {
-                data[headers[i]] = row[i]
+                data[headers[i]] = helpers.FlexibleNormalize(row[i])
             } else {
                 data[headers[i]] = ""
             }
@@ -174,6 +174,7 @@ func createDocument(fileName string, colCount, rowCount int) (string, error) {
 
     doc := models.Document{
         Code:                code,
+        DocumentProductType: "reguler",
         NameDocument:        fileName,
         TotalColumnDocument: int64(colCount),
         TotalRowData: 		int64(rowCount),
@@ -200,6 +201,10 @@ type mergedStore struct {
 }
 
 func (m *mergedStore) push(header string, value string) {
+    /* 
+		Mekanisme untuk memastikan hanya 1 goroutine yang bisa 
+		mengakses data tertentu pada satu waktu.
+	*/
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch header {

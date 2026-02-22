@@ -84,6 +84,9 @@ var Tables = []interface{}{
 	&models.RackHistory{},
 	&models.SummaryInbound{},
 	&models.SummaryOutbound{},
+	&models.SkuProduct{},
+	&models.SkuProductOld{},
+	&models.SkuBundleHistory{},
 }
 
 

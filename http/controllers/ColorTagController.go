@@ -25,7 +25,7 @@ func TagColors(c *gin.Context) {
 	// Response
 	c.JSON(200, gin.H{
 		"success": true,
-		"message": "Data categories",
+		"message": "List Tag Color",
 		"resource": color_tags,
 	})
 }

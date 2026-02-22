@@ -1720,6 +1720,9 @@ func GetProductsByColor(c *gin.Context) {
             "color_tags.name_color LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
 	}
 
+    var totalData int64
+    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+
     // Summary (Gunakan GroupBy Nama Tag)
     type TagSummary struct {
         TagName    string  `json:"tag_name"`
@@ -1728,17 +1731,28 @@ func GetProductsByColor(c *gin.Context) {
     }
 
     var summaries []TagSummary
-
+    
     // jalankan query summary terlebih dahulu
-    baseQuery.Session(&gorm.Session{}).
+    if err := baseQuery.Session(&gorm.Session{}).
 		Select("color_tags.name_color as tag_name, COUNT(products.id) as total_data, SUM(products.price) as total_price").
 		Group("color_tags.name_color").
-		Scan(&summaries)
-
+		Scan(&summaries).Error; err != nil {
+        helpers.ErrorResponse(c, 500, "Gagal mengambil summary tag color", err)
+        return
+    }
+ 
     // Hitung grand total price dari summary
+    tag_color := make([]TagSummary, 0, len(summaries))
+    tag_sku := make([]TagSummary, 0, len(summaries))
     var totalPriceAll float64
     for _, s := range summaries {
         totalPriceAll += s.TotalPrice
+        nameLower := strings.ToLower(s.TagName)
+        if strings.Contains(nameLower, "big") || strings.Contains(nameLower, "small") {
+            tag_sku = append(tag_sku, s)
+        } else {
+            tag_color = append(tag_color, s)
+        }
     }
 
     // Paginate Data
@@ -1753,9 +1767,6 @@ func GetProductsByColor(c *gin.Context) {
     }
 
     var products []productsData
-	var totalData int64
-
-    baseQuery.Session(&gorm.Session{}).Count(&totalData)
 
     // Ambil data detail
     err := baseQuery.Session(&gorm.Session{}).
@@ -1776,9 +1787,20 @@ func GetProductsByColor(c *gin.Context) {
         c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
         return
     }
+    //maping color
+    data_color := make([]productsData, 0, len(products))
+    data_sku := make([]productsData, 0, len(products))
+    for _, p := range products {
+        nameLower := strings.ToLower(p.NameColor)
+        if strings.Contains(nameLower, "big") || strings.Contains(nameLower, "small") {
+            data_sku = append(data_sku, p)
+        } else {
+            data_color = append(data_color, p)
+        }
+    }
 
-	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 	// pagination links
+	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	c.JSON(200, gin.H{
@@ -1788,14 +1810,18 @@ func GetProductsByColor(c *gin.Context) {
 			"resource": gin.H{
                 "total_data":           totalData,
                 "total_price_all":      totalPriceAll,
-                "tags_summary":         summaries,
-                "data":                 products,
-				"from":           offset + 1,
-				"last_page":      lastPage,
-				"links":          links,
-				"per_page":       limit,
-				"to":             offset + int(totalData),
-				"total":          totalData,
+                "tag_color":         tag_color,
+                "tag_sku":         tag_sku,
+                "data_color":                 data_color,
+                "data_sku":                 data_sku,
+                "pagination": gin.H{
+                    "current_page": page,
+                    "from":           offset + 1,
+                    "last_page":      lastPage,
+                    "links":          links,
+                    "per_page":       limit,
+                    "to":             offset + int(totalData),
+                },
 			},
 		},
 	})

@@ -4,7 +4,7 @@ import "time"
 
 type SkuProductOld struct {
 	ID                     uint64          `gorm:"primaryKey;autoIncrement" json:"id"`
-	CodeDocument           string          `gorm:"type:varchar(20);not null;index" json:"code_document"`
+	CodeDocument           string          `gorm:"type:varchar(15);not null;index" json:"code_document"`
 	OldBarcodeProduct      string          `gorm:"type:varchar(50);not null" json:"old_barcode_product"`
 	OldNameProduct         string          `gorm:"type:varchar(1024);not null" json:"old_name_product"`
 	OldPriceProduct        float64         `gorm:"type:decimal(12,2);not null" json:"old_price_product"`
@@ -14,6 +14,9 @@ type SkuProductOld struct {
 	LostQuantityProduct    int64             `gorm:"default:0" json:"lost_quantity_product"`
 	CreatedAt              time.Time       `json:"created_at"`
 	UpdatedAt              time.Time       `json:"updated_at"`
+
+	//Relation
+	Document *Document `gorm:"foreignKey:CodeDocument;references:Code;" json:"document,omitempty"`
 }
 
 func (SkuProductOld) TableName() string {

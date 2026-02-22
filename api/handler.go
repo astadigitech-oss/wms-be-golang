@@ -39,6 +39,7 @@ func RouteHandler(r *gin.Engine) {
 			//storage-report
 			rg.GET("dashboard/storage-report", controllers.GetStorageReport) //DashboardController.go
 			rg.GET("dashboard/storage-report/export", controllers.ExportStorageReport) //DashboardController.go
+			rg.GET("dashboard/archive-storage-report/export", controllers.ExportArchiveStorageReport) //DashboardController.go
 			//general-sales
 			rg.GET("dashboard/general-sales", controllers.GetGeneralSales) //DashboardController.go
 			rg.GET("dashboard/monthly-analytic-sales/export", controllers.ExportMonthlyAnalyticSales) //DashboardController.go
@@ -58,13 +59,30 @@ func RouteHandler(r *gin.Engine) {
 			rg.POST("/bulking/product/category", controllers.ImportBulkingCategory) //BulkingController.go
 			rg.POST("/bulking/product/color", controllers.ImportBulkingColor) //BulkingController.go
 		})
-		//inbund SKU
+		//SKU Route
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir", "Crew", "Reparasi", "Kasir Leader", "Developer"}, func(rg *gin.RouterGroup) {
-			rg.POST("/sku/upload", controllers.ProcessExcelHandler) // GenerateController.go
+			//inbound sku
+			rg.POST("/generate/sku", controllers.ImportExcelSkuHandler) // SkuController.go
+			rg.POST("/generate/sku/merge-headers", controllers.MapAndMergeHeadersSku) // SkuController.go
+			//manifest inbound sku
+			rg.GET("sku-documents", controllers.SkuDocuments) //SkuController.go
+			rg.GET("sku-documents/:code/detail", controllers.DetailSkuDocument) //SkuController.go
+			rg.GET("sku-documents/:code/export", controllers.ExportSkuDocument) //SkuController.go
+			rg.POST("sku-documents/:code/submit", controllers.SubmitSku) //SkuController.go
+			rg.POST("sku-documents/custom-barcode", controllers.SkuCustomBarcode) //SkuController.go
+			rg.PUT("sku-product-olds/:product_id", controllers.UpdateSkuProductOld) //SkuController.go
+			rg.DELETE("sku-documents/:code", controllers.DestroySkuDocument) //SkuController.go
+			//inventory - by sku
+			rg.GET("sku-documents/:code/products", controllers.SkuProducts) //SkuController.go
+			rg.GET("sku-documents/:code/histories", controllers.GetHistoryBundling) //SkuController.go
+			rg.GET("sku-products/:sku_product_id/detail", controllers.DetailSkuProduct) //SkuController.go
+			rg.POST("sku-products/:sku_product_id/damages", controllers.SkuStoreDamaged) //SkuController.go
+			rg.POST("sku-products/check-type", controllers.CheckTypeBundleSku) //SkuController.go
+			rg.POST("sku-products/:sku_product_id/bundles", controllers.SkuStoreBundle) //SkuController.go
 		})
 
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
-			// Manifest Inbound Routes
+			// Manifest Inbound
 			rg.GET("/documents", controllers.IndexDocuments) // DocumentController.go
 			rg.GET("/documents/:code/detail", controllers.DetailDocument) // DocumentController.go
 			rg.GET("/documents/:code/search_old_product/:barcode", controllers.SearchProductOld) // DocumentController.go
@@ -117,11 +135,10 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader"}, func(rg *gin.RouterGroup) {
 			rg.GET("/products/by-color", controllers.GetProductsByColor) // ProductController.go
 		})
-
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader"}, func(rg *gin.RouterGroup) {
 			rg.GET("/products/by-category", controllers.GetProductsByCategory) // ProductController.go
 			rg.POST("/products/:barcode/to-damaged", controllers.ProductToDamaged) // ProductController.go
-		})
+		})	
 		
 		protected.GET("/products/status/display-expired", controllers.GetProductsStatusDisplayExpired) // ProductController.go
 		protected.GET("/products/:product_id/detail", controllers.GetDetailProduct) // ProductController.go
@@ -131,6 +148,7 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv"}, func(rg *gin.RouterGroup) {
 			//category Setting
 			rg.GET("/categories", controllers.Categories) //CategoryController.go
+			rg.GET("/categories/export", controllers.ExportCategory) //CategoryController.go
 			rg.POST("/categories", controllers.AddCategory) //CategoryController.go
 			rg.PUT("/categories/:id", controllers.UpdateCategory) //CategoryController.go
 			rg.DELETE("/categories/:id", controllers.DeleteCategory) //CategoryController.go
