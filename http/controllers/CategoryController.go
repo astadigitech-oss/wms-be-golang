@@ -1,14 +1,18 @@
 package controllers
 
 import (
+	"fmt"
 	"liquid8/wms/config"
 	"liquid8/wms/models"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/xuri/excelize/v2"
 )
 
 func Categories(c *gin.Context) {
@@ -28,6 +32,95 @@ func Categories(c *gin.Context) {
 		"success": true,
 		"message": "Data categories",
 		"resource": categories,
+	})
+}
+
+func ExportCategory(c *gin.Context) {
+	db := config.DB
+	// Buat file excel
+	f := excelize.NewFile()
+	sheet := "Sheet1"
+	f.SetSheetName("Sheet1", sheet)
+
+	// Header
+	headers := []string{
+		"ID", "Nama Category", "Discount", "Max Price Discount",
+		"Created At", "Updated At",
+	}
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	rowIndex := 2
+	limit := 1000
+	lastId := 0
+
+	for {
+		var categories []models.Category
+
+		err := db.
+			Where("id > ?", lastId).
+			Order("id ASC").
+			Limit(limit).
+			Find(&categories).Error
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+
+		if len(categories) == 0 {
+			break
+		}
+
+		for _, category := range categories {
+
+			f.SetCellValue(sheet, fmt.Sprintf("A%d", rowIndex), category.ID)
+			f.SetCellValue(sheet, fmt.Sprintf("B%d", rowIndex), category.NameCategory)
+			f.SetCellValue(sheet, fmt.Sprintf("C%d", rowIndex), category.DiscountCategory)
+			f.SetCellValue(sheet, fmt.Sprintf("D%d", rowIndex), category.MaxPriceCategory)
+			f.SetCellValue(sheet, fmt.Sprintf("E%d", rowIndex), category.CreatedAt.Format("2006-01-02 15:05:14"))
+			f.SetCellValue(sheet, fmt.Sprintf("F%d", rowIndex), category.UpdatedAt.Format("2006-01-02 15:05:14"))
+
+			rowIndex++
+			lastId = int(category.ID)
+		}
+	}
+
+	// Buat folder exports jika belum ada
+	publicPath := "./public/exports"
+	err := os.MkdirAll(publicPath, os.ModePerm)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed create directory",
+		})
+		return
+	}
+
+	fileName := "categories.xlsx"
+	filePath := filepath.Join(publicPath, fileName)
+
+	// Save file
+	if err := f.SaveAs(filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "file diunduh",
+		"data":    downloadURL,
 	})
 }
 
