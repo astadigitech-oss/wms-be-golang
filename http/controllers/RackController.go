@@ -786,7 +786,11 @@ func MoveRackToDisplay(c *gin.Context) {
 		return
 	}
 
-	if err := tx.Model(&models.Product{}).Where("rack_id = ?", rack.ID).Update("rack_id", rack.DisplayRackID).Error; err != nil {
+	location := "main"
+	if err := tx.Model(&models.Product{}).Where("rack_id = ?", rack.ID).Updates(map[string]interface{}{
+		"rack_id": rack.DisplayRackID,
+		"location_type": location,
+	}).Error; err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal memindahkan produk", "error": err.Error()})
 		return
