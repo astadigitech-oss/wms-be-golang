@@ -49,8 +49,9 @@ func RouteHandler(r *gin.Engine) {
 			rg.GET("dashboard/yearly-analytic-sales", controllers.GetYearlyAnalyticSale) //DashboardController.go
 		})
 		//summary report all role
-		protected.GET("dashboard/summary-begin-balance", controllers.SummaryBeginBalance) //DashboardController.go
-		protected.GET("dashboard/summary-ending-balance", controllers.SummaryEndingBalance) //DashboardController.go
+		protected.GET("dashboard/summary-begin-balance", controllers.SummaryBeginBalance) //SummaryController.go
+		protected.GET("dashboard/summary-ending-balance", controllers.SummaryEndingBalance) //SummaryController.go
+		protected.GET("dashboard/list-summary-both", controllers.ListSummaryBoth) //SummaryController.go
 		/* ==================== Inbound Routes ==================== */
 		roleGroup(protected, []string{"Spv", "Team leader"}, func(rg *gin.RouterGroup) {
 			rg.POST("/generate", controllers.ProcessExcelHandler) // GenerateController.go

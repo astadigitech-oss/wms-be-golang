@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"errors"
 	"fmt"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
@@ -432,7 +431,7 @@ func GetGeneralSales(c *gin.Context) {
     // var err error
 
     if fromInput != "" {
-        fromDate, err = parseFlexibleDate(fromInput, loc)
+        fromDate, err = helpers.ParseFlexibleDate(fromInput)
     	if err != nil { 
 			c.JSON(500, gin.H{"message": "Gagal memparsing tanggal", "error": fmt.Sprintf("%v", err)})
 			return
@@ -442,7 +441,7 @@ func GetGeneralSales(c *gin.Context) {
     }
 
     if toInput != "" {
-		toDate, err = parseFlexibleDate(toInput, loc)
+		toDate, err = helpers.ParseFlexibleDate(toInput)
 		if err != nil {
 			c.JSON(500, gin.H{"message": "Gagal memparsing tanggal", "error": fmt.Sprintf("%v", err)})
 			return
@@ -691,134 +690,6 @@ func GetYearlyAnalyticSale(c *gin.Context) {
 		"resource":    response,
 	})
 }
-
-//summary-report
-func SummaryBeginBalance(c *gin.Context) {
-
-    loc, err := time.LoadLocation("Asia/Jakarta")
-    if err != nil {
-        c.JSON(500, gin.H{"message": "gagal load timezone"})
-        return
-    }
-
-    // Ambil input date, default hari ini
-    inputDate := c.DefaultQuery("date", time.Now().In(loc).Format("2006-01-02"))
-
-    // Parse tanggal
-    parsed, err := parseFlexibleDate(inputDate, loc)
-    if err != nil {
-        c.JSON(400, gin.H{
-			"success": false,
-            "error": err.Error(),
-        })
-        return
-    }
-
-    // Target = H-1
-    targetDate := parsed.AddDate(0, 0, -1)
-
-    var snapshot models.DailyInventorySnapshot
-
-    err = config.DB.
-        Where("snapshot_date = ?", targetDate.Format("2006-01-02")).
-        First(&snapshot).Error
-
-    var response gin.H
-
-    if errors.Is(err, gorm.ErrRecordNotFound) {
-        response = gin.H{
-            "date_snapshot":     targetDate.Format("2006-01-02"),
-            "total_all_product": 0,
-            "total_all_price":   0,
-            "message": "Data saldo awal belum tersedia (cronjob belum berjalan kemarin)",
-        }
-    } else if err != nil {
-        c.JSON(500, gin.H{"message": err.Error()})
-        return
-    } else {
-        response = gin.H{
-            "date_snapshot":     targetDate.Format("2006-01-02"),
-            "total_all_product": snapshot.TotalQty,
-            "total_all_price":   snapshot.TotalPrice,
-        }
-    }
-
-    c.JSON(200, gin.H{
-        "success":  true,
-        "message": "Summary Saldo Awal",
-        "resource":    response,
-    })
-}
-func SummaryEndingBalance(c *gin.Context) {
-
-    loc, _ := time.LoadLocation("Asia/Jakarta")
-
-    filterDateStr := c.DefaultQuery("date", time.Now().In(loc).Format("2006-01-02"))
-    todayStr := time.Now().In(loc).Format("2006-01-02")
-
-	filterDate, err := parseFlexibleDate(filterDateStr, loc)
-    if err != nil {
-        c.JSON(400, gin.H{"success": false, "message": err.Error()})
-        return
-    }
-
-	today, _ := time.ParseInLocation("2006-01-02", todayStr, loc)
-
-    // ========== 1. JIKA TANGGAL LAMA => AMBIL SNAPSHOT ==========
-    if filterDate.Before(today) {
-
-        var snapshot models.DailyInventorySnapshot
-
-        err := config.DB.
-            Where("snapshot_date = ?", filterDate).
-            First(&snapshot).Error
-
-        if errors.Is(err, gorm.ErrRecordNotFound) {
-
-            c.JSON(200, gin.H{
-                "success":  true,
-                "message": "Summary Saldo Akhir (Data History)",
-                "resource": gin.H{
-					"date_current": filterDate.Format("2006-01-02"),
-					"total_all_product": 0,
-					"total_all_price": 0,
-					"note": "Data history tidak ditemukan",
-				},
-			})
-            return
-        }
-
-        c.JSON(200, gin.H{
-            "status":  true,
-            "message": "Summary Saldo Akhir (Data History)",
-            "data": gin.H{
-				"date_current": filterDate.Format("2006-01-02"),
-				"total_all_product": snapshot.TotalQty,
-				"total_all_price": snapshot.TotalPrice,
-			},
-		})
-        return
-    }
-
-    // ========== 2. JIKA HARI INI => HITUNG REALTIME ==========
-    totalQty, totalPrice, err := helpers.CalculateCurrentBalance()
-    if err != nil {
-        c.JSON(500, gin.H{"status": false, "message": err.Error()})
-        return
-    }
-
-    c.JSON(200, gin.H{
-        "status":  true,
-        "message": "Summary Saldo Akhir",
-        "data": gin.H{
-			"date_current": filterDate.Format("2006-01-02"),
-			"total_all_product": totalQty,
-			"total_all_price": totalPrice,
-		},
-    })
-}
-
-
 
 //======================== helper =================================
 //storage-report
@@ -1352,7 +1223,7 @@ func monthlyAnalyticSales(db *gorm.DB, from, to string) (monthlyAnalyticSaleResp
     // var err error
 
     if from != "" {
-        fromDate, err = parseFlexibleDate(from, loc)
+        fromDate, err = helpers.ParseFlexibleDate(from)
     	if err != nil { 
 			return monthlyAnalyticSaleResponse{}, err
 		}
@@ -1362,7 +1233,7 @@ func monthlyAnalyticSales(db *gorm.DB, from, to string) (monthlyAnalyticSaleResp
     }
 
     if to != "" {
-		toDate, err = parseFlexibleDate(to, loc)
+		toDate, err = helpers.ParseFlexibleDate(to)
 		if err != nil {
 			return monthlyAnalyticSaleResponse{}, err
 		}
@@ -1811,25 +1682,6 @@ func queryInventoryAggregate(db *gorm.DB) ([]categoryAggregate, error) {
 
 	err := db.Raw(query).Scan(&result).Error
 	return result, err
-}
-
-func parseFlexibleDate(input string, loc *time.Location) (time.Time, error) {
-    layouts := []string{
-        "2006-01-02", // standar API
-        "02-01-2006", // format indo
-        "02/01/2006", // alternatif
-    }
-
-    for _, layout := range layouts {
-        if t, err := time.ParseInLocation(layout, input, loc); err == nil {
-            return t, nil
-        }
-    }
-
-     return time.Time{}, fmt.Errorf(
-        "format tanggal '%s' tidak dikenali. Gunakan format: YYYY-MM-DD atau DD-MM-YYYY",
-        input,
-    )
 }
 
 func convertToEnglishMonth(indonesian string) string {

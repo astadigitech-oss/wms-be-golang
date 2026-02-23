@@ -1192,6 +1192,23 @@ func CalculateCurrentBalance() (int64, float64, error) {
     }
 
     // =========================
+    // 5. SKU
+    // =========================
+    var skuProduct []categoryResult
+
+    err = config.DB.Raw(`
+        SELECT 
+            COUNT(p.id) as total_rows,
+            COALESCE(SUM(quantity_product, 0)) as total_category,
+            COALESCE(SUM(price_product * quantity_product, 0)) as total_price_category
+        FROM sku_products
+    `).Scan(&skuProduct).Error
+
+    if err != nil {
+        return 0, 0, fmt.Errorf("Gagal menghitung sku product: %v", err)
+    }
+
+    // =========================
     // HITUNG TOTAL
     // =========================
     var totalAllProduct int64 = 0
@@ -1208,6 +1225,11 @@ func CalculateCurrentBalance() (int64, float64, error) {
     }
 
     for _, s := range staging {
+        totalAllProduct += s.TotalCategory
+        totalAllPrice += s.TotalPriceCategory
+    }
+
+    for _, s := range skuProduct {
         totalAllProduct += s.TotalCategory
         totalAllPrice += s.TotalPriceCategory
     }
@@ -1296,6 +1318,30 @@ func FlexibleNormalize(input string) string {
 
 	// kalau bukan pure angka/currency → biarkan
 	return s
+}
+
+func ParseFlexibleDate(input string) (time.Time, error) {
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		return time.Time{}, err
+	}
+
+    layouts := []string{
+        "2006-01-02", // standar API
+        "02-01-2006", // format indo
+        "02/01/2006", // alternatif
+    }
+
+    for _, layout := range layouts {
+        if t, err := time.ParseInLocation(layout, input, loc); err == nil {
+            return t, nil
+        }
+    }
+
+     return time.Time{}, fmt.Errorf(
+        "format tanggal '%s' tidak dikenali. Gunakan format: YYYY-MM-DD atau DD-MM-YYYY",
+        input,
+    )
 }
 
 func ErrorResponse(c *gin.Context, status int, message string, err error) {

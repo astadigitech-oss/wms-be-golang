@@ -43,10 +43,12 @@ func processSummaryDaily() error {
 
 	loc, _ := time.LoadLocation("Asia/Jakarta")
 	now := time.Now().In(loc)
+	startOfDay := now.Truncate(24 * time.Hour)
+	endOfDay := startOfDay.Add(24 * time.Hour)
 	date := now.Format("2006-01-02")
 
 	// INBOUND
-	inbound, err := calculateInbound(tx, date)
+	inbound, err := calculateInbound(tx, startOfDay, endOfDay)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -59,7 +61,7 @@ func processSummaryDaily() error {
 	}
 
 	// OUTBOUND
-	outbound, err := calculateOutbound(tx, date)
+	outbound, err := calculateOutbound(tx, startOfDay, endOfDay)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -84,7 +86,7 @@ type SummaryResult struct {
 }
 
 //calculate
-func calculateInbound(tx *gorm.DB, today string) (SummaryResult, error) {
+func calculateInbound(tx *gorm.DB, start, end time.Time) (SummaryResult, error) {
 	var total SummaryResult
 
 	// PRODUCTS (main + staging)
@@ -99,7 +101,7 @@ func calculateInbound(tx *gorm.DB, today string) (SummaryResult, error) {
 		Where("location_type IN ?", []string{"main", "staging"}).
 		Where("status != ?", "scrap_qcd").
 		Where("quality != ?", "damaged").
-		Where("created_at = ?", today).
+		Where("created_at >= ? AND created_at < ?", start, end).
 		Scan(&products).Error
 	if err != nil {
 		return total, err
@@ -114,7 +116,7 @@ func calculateInbound(tx *gorm.DB, today string) (SummaryResult, error) {
 			COALESCE(SUM(total_price_custom),0) as new_price,
 			COALESCE(SUM(total_price_custom),0) as display_price
 		`).
-		Where("created_at = ?", today).
+		Where("created_at >= ? AND created_at < ?", start, end).
 		Scan(&bundles).Error
 	if err != nil {
 		return total, err
@@ -129,7 +131,7 @@ func calculateInbound(tx *gorm.DB, today string) (SummaryResult, error) {
 	return total, nil
 }
 
-func calculateOutbound(tx *gorm.DB, today string) (SummaryResult, error) {
+func calculateOutbound(tx *gorm.DB, start, end time.Time) (SummaryResult, error) {
 	var total SummaryResult
 
 	// // PALET
@@ -141,7 +143,7 @@ func calculateOutbound(tx *gorm.DB, today string) (SummaryResult, error) {
 	// 		COALESCE(SUM(after_price_bulky_sale),0) as new_price,
 	// 		COALESCE(SUM(display_price),0) as display_price
 	// 	`).
-	// 	Where("created_at = ?", today).
+	// 	Where("created_at >= ? AND created_at < ?", start, end).
 	// 	Scan(&bulky).Error
 	// if err != nil {
 	// 	return total, err
@@ -156,7 +158,7 @@ func calculateOutbound(tx *gorm.DB, today string) (SummaryResult, error) {
 			COALESCE(SUM(after_price_bulky_sale),0) as new_price,
 			COALESCE(SUM(display_price),0) as display_price
 		`).
-		Where("created_at = ?", today).
+		Where("created_at >= ? AND created_at < ?", start, end).
 		Scan(&bulky).Error
 	if err != nil {
 		return total, err
@@ -171,7 +173,7 @@ func calculateOutbound(tx *gorm.DB, today string) (SummaryResult, error) {
 			COALESCE(SUM(product_price_sale),0) as new_price,
 			COALESCE(SUM(base_price),0) as display_price
 		`).
-		Where("created_at = ?", today).
+		Where("created_at >= ? AND created_at < ?", start, end).
 		Scan(&sales).Error
 	if err != nil {
 		return total, err
@@ -188,7 +190,7 @@ func calculateOutbound(tx *gorm.DB, today string) (SummaryResult, error) {
 		`).
 		Where("status = ?", "migrate").
 		Where("quality = ?", "lolos").
-		Where("updated_at = ?", today).
+		Where("created_at >= ? AND created_at < ?", start, end).
 		Scan(&migrate).Error
 	if err != nil {
 		return total, err
