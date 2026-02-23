@@ -32,7 +32,7 @@ func main() {
 	*/
 
 	//setiap hari jam 9 malam -> jalankan daily snapshoot
-	c.AddFunc("0 * * * * *", safeJob(jobs.RunSummaryDaily, log))
+	c.AddFunc("0 0 21 * * *", safeJob(jobs.RunSummaryDaily, log))
 	c.AddFunc("0 0 21 * * *", safeJob(jobs.RunDailySnapshot, log))
 	//setiap hari
 	c.AddFunc("0 0 0 * * *", safeJob(jobs.RunExpirdBuyerLoyalty, log))
