@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"time"
 
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -150,7 +154,7 @@ func ProductBySourceRack(c *gin.Context) {
 		Where("products.rack_id IS NULL").
 		Where("products.status = ?", "display").
 		Where("products.quality = ?", "lolos").
-		Where("products.location_type = ?", &locationType)
+		Where("products.location_type = ?", locationType)
 
 	// Filter by rack name
 	if rackID != "" {
@@ -470,6 +474,7 @@ func UpdateRack(c *gin.Context) {
 }
 
 func AddProductToRack(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
 	if err != nil {
 		c.JSON(400, gin.H{"message": "rack_id tidak valid"})
@@ -579,9 +584,27 @@ func AddProductToRack(c *gin.Context) {
 		return
 	}
 
+	source := "display"
+	if *product.LocationType == "staging" {
+		source = "staging"
+	}
+	rack_history := models.RackHistory{
+		UserID: uint64(user.ID),
+		RackID: uint64(rack.ID),
+		Barcode: product.Barcode,
+		ProductName: &product.Name,
+		Action: "IN",
+		Source: &source,
+	}
+	if err := tx.Create(&rack_history).Error; err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal membuat rack history", err)
+		return
+	}
+
 	if err := tx.Commit().Error; err != nil {
         tx.Rollback()
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        helpers.ErrorResponse(c, 500, "Failed Commit", err)
         return
     }
 
@@ -593,6 +616,7 @@ func AddProductToRack(c *gin.Context) {
 }
 
 func RemoveProductFromRack(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
 	if err != nil {
 		c.JSON(400, gin.H{"message": "rack_id tidak valid"})
@@ -662,9 +686,27 @@ func RemoveProductFromRack(c *gin.Context) {
 		return
 	}
 
+	source := "display"
+	if *product.LocationType == "staging" {
+		source = "staging"
+	}
+	rack_history := models.RackHistory{
+		UserID: uint64(user.ID),
+		RackID: uint64(rack.ID),
+		Barcode: product.Barcode,
+		ProductName: &product.Name,
+		Action: "OUT",
+		Source: &source,
+	}
+	if err := tx.Create(&rack_history).Error; err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal membuat rack history", err)
+		return
+	}
+
 	if err := tx.Commit().Error; err != nil {
         tx.Rollback()
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        helpers.ErrorResponse(c, 500, "Failed commit", err)
         return
     }
 
@@ -798,30 +840,14 @@ func MoveRackToDisplay(c *gin.Context) {
 	}
 
 	//update rack display
-	if err := tx.Model(&parentRack).Updates(map[string]interface{}{
-		"total_data": gorm.Expr("total_data + ?", rack.TotalData),
-		"total_new_price_product": gorm.Expr(
-			"total_new_price_product + ?", rack.TotalNewPriceProduct,
-		),
-		"total_old_price_product": gorm.Expr(
-			"total_old_price_product + ?", rack.TotalOldPriceProduct,
-		),
-		"total_display_price_product": gorm.Expr(
-			"total_display_price_product + ?", rack.TotalDisplayPriceProduct,
-		),
-	}).Error; err != nil {
+	if err := helpers.RecalculateRack(tx, uint64(parentRack.ID)); err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal update statistik rak display", "error": err.Error()})
 		return
 	}
 
 	//update rack staging
-	if err := tx.Model(&rack).Updates(map[string]interface{}{
-		"total_data": 0,
-		"total_new_price_product": 0,
-		"total_old_price_product": 0,
-		"total_display_price_product": 0,
-	}).Error; err != nil {
+	if err := helpers.RecalculateRack(tx, uint64(rack.ID)); err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal memindahkan rak", "error": err.Error()})
 		return
@@ -836,5 +862,264 @@ func MoveRackToDisplay(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true, 
 		"message": "Berhasil memindahkan rak",
+	})
+}
+
+func GetRackInsertionStats(c *gin.Context) {
+	source := c.Query("source")
+	search := c.Query("q")
+
+	if source != "staging" && source != "display" {
+		helpers.ErrorResponse(c, 400, "Source harus staging atau display", nil)
+		return
+	}
+
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "30"))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	offset := (page - 1) * perPage
+
+	db := config.DB
+
+	// 🔹 Subquery ambil latest id per barcode
+	latestSubQuery := db.
+		Table("rack_histories").
+		Select("MAX(id) as id").
+		Group("barcode")
+
+	type Result struct {
+		RackID        uint
+		RackName      string
+		UserID        uint
+		UserName      string
+		TotalInserted int
+	}
+
+	query := db.
+		Table("rack_histories rh").
+		Select(`
+			rh.rack_id,
+			COALESCE(r.name, 'Rak Deleted') as rack_name,
+			rh.user_id,
+			COALESCE(u.name, 'User Deleted') as user_name,
+			COUNT(*) as total_inserted
+		`).
+		Joins("JOIN (?) latest ON latest.id = rh.id", latestSubQuery).
+		Joins("LEFT JOIN racks r ON r.id = rh.rack_id").
+		Joins("LEFT JOIN users u ON u.id = rh.user_id").
+		Where("rh.action = ?", "IN").
+		Where("r.source = ?", source).
+		Group("rh.rack_id, r.name, rh.user_id, u.name")
+
+	if search != "" {
+		query = query.Where(`
+			r.name LIKE ? OR u.name LIKE ?
+		`, "%"+search+"%", "%"+search+"%")
+	}
+
+	var total int64
+	query.Count(&total) // total group rows
+
+	var results []Result
+	err := query.
+		Limit(perPage).
+		Offset(offset).
+		Scan(&results).Error
+
+	if err != nil {
+		helpers.ErrorResponse(c, 500, "Internal server error", err)
+		return
+	}
+
+	// 🔹 Format grouping by rack
+	rackMap := make(map[uint]gin.H)
+	totalAllUsers := 0
+
+	for _, row := range results {
+
+		totalAllUsers += row.TotalInserted
+
+		if _, exists := rackMap[row.RackID]; !exists {
+			rackMap[row.RackID] = gin.H{
+				"rack_id":       row.RackID,
+				"rack_name":     row.RackName,
+				"total_in_rack": 0,
+				"users":         []gin.H{},
+			}
+		}
+
+		rackData := rackMap[row.RackID]
+		rackData["total_in_rack"] = rackData["total_in_rack"].(int) + row.TotalInserted
+
+		rackData["users"] = append(
+			rackData["users"].([]gin.H),
+			gin.H{
+				"user_id":        row.UserID,
+				"user_name":      row.UserName,
+				"total_inserted": row.TotalInserted,
+			},
+		)
+
+		rackMap[row.RackID] = rackData
+	}
+
+	finalData := []gin.H{}
+	for _, v := range rackMap {
+		finalData = append(finalData, v)
+	}
+
+	// pagination links
+	lastPage := int(math.Ceil(float64(total) / float64(perPage)))
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Statistik keseluruhan produk masuk di Rak " + source,
+		"data": gin.H{
+			"source":          source,
+			"total_all_users": totalAllUsers,
+			"data":         finalData,
+			"pagination": gin.H{
+				"current_page": page,
+				"per_page": perPage,
+				"total":    total,
+				"links": links,
+				"from": offset + 1,
+				"to": offset + len(finalData),
+			},
+		},
+	})
+}
+
+func ExportRackHistory(c *gin.Context) {
+	source := c.Query("source")
+	date := c.DefaultQuery("date", time.Now().Format("2006-01-02"))
+
+	if source != "staging" && source != "display" {
+		helpers.ErrorResponse(c, 422, "Source harus staging atau display", nil)
+		return
+	}
+
+	db := config.DB
+
+	// Subquery untuk ambil ID terakhir per barcode di tanggal tersebut
+	latestSubQuery := db.
+		Table("rack_histories").
+		Select("MAX(id) as id").
+		Group("barcode")
+
+	type Result struct {
+		RackID        uint
+		RackName      string
+		UserID        uint
+		UserName      string
+		ProductName 	string
+		Barcode		string
+		CreatedAt		time.Time
+	}
+
+	var histories []Result
+	err := db.
+		Table("rack_histories rh").
+		Select(`
+			rh.rack_id,
+			COALESCE(r.name, 'Rak Deleted') as rack_name,
+			rh.user_id,
+			COALESCE(u.name, 'User Deleted') as user_name,
+			rh.product_name,
+			rh.barcode,
+			rh.created_at
+		`).
+		Joins("JOIN (?) latest ON latest.id = rh.id", latestSubQuery).
+		Joins("LEFT JOIN racks r ON r.id = rh.rack_id").
+		Joins("LEFT JOIN users u ON u.id = rh.user_id").
+		Where("rh.action = ?", "IN").
+		Where("r.source = ?", source).
+		Order("rh.rack_id ASC").
+		Order("rh.created_at DESC").
+		Scan(&histories).Error
+
+	if err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data histories", err)
+		return
+	}
+
+	// Generate Excel
+	file := excelize.NewFile()
+	sheet := "Sheet1"
+	file.SetSheetName("Sheet1", sheet)
+
+	// Style Config 
+	var BorderStyle = excelize.Style{
+		Border: []excelize.Border{
+			{Type: "left", Style: 1, Color: "000000"},
+			{Type: "right", Style: 1, Color: "000000"},
+			{Type: "top", Style: 1, Color: "000000"},
+			{Type: "bottom", Style: 1, Color: "000000"},
+		},
+	}
+	var FillGrayStyle = excelize.Style{
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"e5e7eb"},
+			Pattern: 1,
+		},
+	}
+	var BoldStyle = excelize.Style{Font: &excelize.Font{Bold: true}}
+
+	border, _ := helpers.BuildStyle(file, BorderStyle)
+	headerStyle, _ := helpers.BuildStyle(file, BorderStyle, BoldStyle, FillGrayStyle)
+	file.SetCellStyle(sheet, "A1", "F1", headerStyle)
+
+	// Header
+	file.SetColWidth(sheet, "A", "A", 3)
+	file.SetColWidth(sheet, "B", "B", 25)
+	file.SetColWidth(sheet, "C", "E", 15)
+	file.SetColWidth(sheet, "F", "F", 65)
+	headers := []string{
+		"No",
+		"Tanggal & Waktu Masuk",
+		"Nama Rak",
+		"Operator (User)",
+		"Barcode",
+		"Nama Produk",
+	}
+
+	for i, h := range headers {
+		cell := fmt.Sprintf("%c1", 'A'+i)
+		file.SetCellValue(sheet, cell, h)
+	}
+
+	// Data
+	baris := 2
+	for i, row := range histories {
+		file.SetCellValue(sheet, fmt.Sprintf("A%d", baris), i+1)
+		file.SetCellValue(sheet, fmt.Sprintf("B%d", baris), row.CreatedAt.Format("2006-01-02 15:04:05"))
+		file.SetCellValue(sheet, fmt.Sprintf("C%d", baris), row.RackName)
+		file.SetCellValue(sheet, fmt.Sprintf("D%d", baris), row.UserName)
+		file.SetCellValue(sheet, fmt.Sprintf("E%d", baris), row.Barcode)
+		file.SetCellValue(sheet, fmt.Sprintf("F%d", baris), row.ProductName)
+
+		baris++
+	}
+	file.SetCellStyle(sheet, fmt.Sprintf("A%d", 2), fmt.Sprintf("F%d", baris-1), border)
+
+	fileName := fmt.Sprintf("DETAIL_RAK_%s_%s.xlsx", strings.ToUpper(source), date)
+
+	// Save file
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := file.SaveAs(fullPath); err != nil {
+		helpers.ErrorResponse(c, 500, "Internal Server Erorr", err)
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "File berhasil diunduh",
+		"url":     downloadURL,
 	})
 }

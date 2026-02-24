@@ -585,7 +585,8 @@ func RecalculateRack(db *gorm.DB, rackID uint64) error {
 			COALESCE(SUM(display_price), 0) as total_display_price
 		`).
 		Where("rack_id = ?", rackID).
-		Where("status NOT IN ?", []string{"dump", "migrate", "scrap_qcd", "sale", "repair"}).
+		Where("status IN ?", []string{"display", "expired", "slow_moving"}).
+		Where("quality ?", "lolos").
 		Scan(&res).Error
 
 	if err != nil {

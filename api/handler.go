@@ -120,6 +120,8 @@ func RouteHandler(r *gin.Engine) {
 			
 			/* ==================== RACK ==================== */
 			rg.GET("/racks", controllers.GetRacks) //RackController.go
+			rg.GET("/racks/history-stats", controllers.GetRackInsertionStats) //RackController.go
+			rg.GET("/racks/history-stats/export", controllers.ExportRackHistory) //RackController.go
 			rg.GET("/racks/:rack_id/detail", controllers.RackDetail) //RackController.go
 			rg.GET("/racks/list-product", controllers.ProductBySourceRack) //RackController.go
 			rg.POST("/racks", controllers.AddRack) //RackController.go

@@ -1506,7 +1506,6 @@ func SoScanInDisplayRack(c *gin.Context) {
 	tx.Create(&models.RackHistory{
 		UserID:    uint64(user.ID),
 		RackID:    targetRack,
-		ProductID: product.ID,
 		Barcode:   product.Barcode,
 		ProductName: &product.Name,
 		Action:    "IN",
