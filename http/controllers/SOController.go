@@ -5,6 +5,7 @@ import (
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
+	"regexp"
 	"strings"
 
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 //Stock Opname -> color
@@ -1029,7 +1031,607 @@ func StopSoCategory(c *gin.Context) {
     })
 }
 
-/* ==================== REPAIR STATION ==================== */
+/* ==================== GENERALE SO ==================== */
+//rack and product
+func SoProductDisplay(c *gin.Context) {
+	barcode := c.Param("barcode")
+	user := c.MustGet("auth_user").(models.User) // dari middleware auth
+	
+    var product models.Product
+    err := config.DB.Table("products").
+	Where("location_type = ?", "main").
+	Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+	First(&product).Error
+	
+    if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			helpers.ErrorResponse(c, 404, fmt.Sprintf("Produk tidak ditemukan dengan barcode: %s", barcode), err)
+		}else {
+			helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+		}
+        return
+    }
+
+    // Cek sudah pernah SO
+    if product.IsSo != nil && *product.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
+        })
+        return
+    }
+
+    // ===== Cek quality migrate =====
+    if product.Quality != "lolos" {
+        failReason := "Kualitas tidak memenuhi syarat"
+		if product.QualityText != nil {
+			failReason = *product.QualityText
+		}
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal SO: "+ failReason,
+        })
+        return
+    }
+
+    // ===== Update SO =====
+    if err := config.DB.Model(&product).
+        Updates(map[string]interface{}{
+            "is_so":   "done",
+            "user_so": user.ID,
+        }).Error; err != nil {
+
+        c.JSON(500, gin.H{
+            "success":  false,
+            "message": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Berhasil SO: " + product.Name,
+        "data":    product,
+    })
+}
+func SoProductStaging(c *gin.Context) {
+	barcode := c.Param("barcode")
+	user := c.MustGet("auth_user").(models.User) // dari middleware auth
+	
+    var product models.Product
+    err := config.DB.Table("products").
+	Where("location_type = ?", "staging").
+	Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+	First(&product).Error
+	
+    if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			helpers.ErrorResponse(c, 404, fmt.Sprintf("Produk tidak ditemukan dengan barcode: %s", barcode), err)
+		}else {
+			helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+		}
+        return
+    }
+
+    // Cek sudah pernah SO
+    if product.IsSo != nil && *product.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
+        })
+        return
+    }
+
+    // ===== Cek quality migrate =====
+    if product.Quality != "lolos" {
+		failReason := "Kualitas tidak memenuhi syarat"
+		if product.QualityText != nil {
+			failReason = *product.QualityText
+		}
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal SO: "+ failReason,
+        })
+        return
+    }
+
+    // ===== Update SO =====
+    if err := config.DB.Model(&product).
+        Updates(map[string]interface{}{
+            "is_so":   "done",
+            "user_so": user.ID,
+        }).Error; err != nil {
+
+        c.JSON(500, gin.H{
+            "success":  false,
+            "message": err.Error(),
+        })
+        return
+    }
+
+    c.JSON(200, gin.H{
+        "success":  true,
+        "message": "Berhasil SO: " + product.Name,
+        "data":    product,
+    })
+}
+func SoRackByID(c *gin.Context) {
+
+	rackID, err := strconv.Atoi(c.Param("rack_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": false})
+		return
+	}
+
+	user := c.MustGet("auth_user").(models.User)
+
+	//start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error", "error": fmt.Sprintf("%v", r)})
+        }
+    }()
+
+	var rack models.Rack
+	if err := tx.First(&rack, rackID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"status": false, "message": "Rack tidak ditemukan"})
+		return
+	}
+
+	if err := performRackSO(tx, &rack, user.ID); err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal so rack", err)
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Berhasil SO rack " + rack.Name,
+		"data":    rack,
+	})
+}
+func SoRackByBarcode(c *gin.Context) {
+
+	var req struct {
+		RackBarcode string `json:"rack_barcode" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+        ve, ok := err.(validator.ValidationErrors)
+        if !ok {
+            c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+            return
+        }
+
+        errors := make(map[string]string)
+        for _, e := range ve {
+            field := strings.ToLower(e.Field())
+
+            switch field {
+                case "rackbrcode":
+                    errors["rack_barcode"] = "Rack barcode wajib diisi"
+            }
+        }
+
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": false,
+            "message": "Validasi gagal",
+            "errors": errors,
+        })
+        return
+    }
+
+	user := c.MustGet("auth_user").(models.User)
+
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+	// Pastikan Rollback dipanggil jika ada panic atau error di tengah proses
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+                "success": false, 
+                "message": "Internal server error occurred and transaction rolled back",
+                "error": fmt.Sprintf("%v", r),
+            })
+            return
+		}
+	}()
+
+	var rack models.Rack
+	if err := tx.Where("barcode = ?", req.RackBarcode).
+		First(&rack).Error; err != nil {
+
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  false,
+			"message": "Rack tidak ditemukan",
+		})
+		return
+	}
+
+	if err := performRackSO(tx, &rack, user.ID); err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal melakukan so", err)
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Berhasil SO rack " + rack.Name,
+		"data":    rack,
+	})
+}
+func SoScanInDisplayRack(c *gin.Context) {
+	var req struct {
+		Barcode string `json:"barcode" binding:"required"`
+		RackID  uint   `json:"rack_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+        ve, ok := err.(validator.ValidationErrors)
+        if !ok {
+            c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+            return
+        }
+
+        errors := make(map[string]string)
+        for _, e := range ve {
+            field := strings.ToLower(e.Field())
+
+            switch field {
+                case "barcode":
+                    errors["barcode"] = "Barcode produk baru wajib diisi"
+                case "rackid":
+					errors["rack_id"] = "Rack id wajib diisi"
+            }
+        }
+
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": false,
+            "message": "Validasi gagal",
+            "errors": errors,
+        })
+        return
+    }
+
+	user := c.MustGet("auth_user").(models.User)
+
+	//start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error", "error": fmt.Sprintf("%v", r)})
+        }
+    }()
+
+	// =============================
+	// VALIDASI RACK
+	// =============================
+	var rack models.Rack
+	if err := tx.First(&rack, req.RackID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"status": false, "message": "Rack tidak ditemukan"})
+		return
+	}
+
+	// location := "main"
+	if rack.Source != "display" {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"status": false, "message": "Rack bukan display"})
+		return
+	}
+
+	if rack.IsSo {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"status": false, "message": "Rack sedang terkunci (Sudah SO)"})
+		return
+	}
+
+	// =============================
+	// CARI PRODUCT (1 TABLE SAJA)
+	// =============================
+	var product models.Product
+	err := tx.Preload("Category").
+		Where("barcode = ? OR old_barcode_product = ?", req.Barcode, req.Barcode).
+		First(&product).Error
+
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"status": false, "message": "Produk tidak ditemukan"})
+		return
+	}
+
+	// =============================
+	// VALIDASI PRODUCT
+	// =============================
+	if product.IsSo != nil && *product.IsSo == "done" && product.RackID != nil && *product.RackID == uint64(rack.ID) {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Produk sudah di rack ini dan SO done",
+		})
+		return
+	}
+
+	if product.TagColorID != nil {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Gagal: Produk ini terdeteksi sebagai produk color tidak bisa masuk rack",
+		})
+		return
+	}
+
+	forbidden := map[string]bool{
+		"dump":      true,
+		"sale":      true,
+		"migrate":   true,
+		"repair":    true,
+		"scrap_qcd": true,
+	}
+
+	if forbidden[product.Status] {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": fmt.Sprintf("Status produk %s, tidak diperbolehkan masuk rack", product.Status),
+		})
+		return
+	}
+
+	if product.Quality != "lolos" {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": fmt.Sprintf("Gaga: Produk quality %s : %s", product.Quality, *product.QualityText),
+		})
+		return
+		
+	}
+
+	// =============================
+	// VALIDASI KATEGORI vs RACK
+	// =============================
+	categoryMatch := false
+	rackName := strings.ToUpper(strings.TrimSpace(rack.Name))
+	// ambil string setelah tanda "-"
+	if idx := strings.Index(rackName, "-"); idx != -1 {
+		rackName = rackName[idx+1:]
+	}
+	// ganti sisa "-" jadi spasi
+	rackName = strings.ReplaceAll(rackName, "-", " ")
+	// hapus spasi + angka di akhir (contoh: "ABC 12" → "ABC")
+	re := regexp.MustCompile(`\s+\d+$`)
+	rackName = re.ReplaceAllString(rackName, "")
+	// pisah berdasarkan koma
+	keywords := strings.Split(rackName, ",")
+	for _, keyword := range keywords {
+		keyword = strings.TrimSpace(keyword)
+		if keyword == "" {
+			continue
+		}
+
+		if strings.Contains(product.Category.NameCategory, keyword) {
+			categoryMatch = true
+			break
+		}
+	}
+
+	if !categoryMatch {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Kategori tidak sesuai dengan rack",
+		})
+		return
+	}
+
+	// =============================
+	// UPDATE PRODUCT (NO COPY TABLE)
+	// =============================
+	var oldRackID uint64
+	if product.RackID != nil {
+		oldRackID = *product.RackID
+	}
+	targetRack := uint64(rack.ID)
+
+	if err := tx.Model(&product).Updates(map[string]interface{}{
+		"rack_id": targetRack,
+		"is_so": "done",
+		"user_so": user.ID,
+		"location_type": "main",
+	}).Error; err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+		return
+	}
+
+	// =============================
+	//  RECALCULATE RACK
+	// =============================
+	if oldRackID != targetRack {
+		if err := helpers.RecalculateRack(tx, oldRackID); err != nil {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 500, "Gagal: recalculate rack error", err)
+			return
+		}
+	}
+
+	if err := helpers.RecalculateRack(tx, targetRack); err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal: recalculate rack error", err)
+		return
+	}
+
+	// =============================
+	// HISTORY
+	// =============================
+	sourceType := "display"
+	if *product.LocationType == "staging" {
+		sourceType = "staging"
+	}
+	tx.Create(&models.RackHistory{
+		UserID:    uint64(user.ID),
+		RackID:    targetRack,
+		ProductID: product.ID,
+		Barcode:   product.Barcode,
+		ProductName: &product.Name,
+		Action:    "IN",
+		Source:    &sourceType,
+	})
+
+	if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        helpers.ErrorResponse(c, 500, "Gagal commit", err)
+        return
+    }
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Berhasil masuk rack & SO done",
+		"data":    product,
+	})
+}
+
+//b2b
+func SoB2BDocument(c *gin.Context) {
+	var req struct {
+		CodeDocument string `json:"code_document" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+        ve, ok := err.(validator.ValidationErrors)
+        if !ok {
+            c.JSON(400, gin.H{"status": false, "message": "Format JSON tidak valid"})
+            return
+        }
+        errors := make(map[string]string)
+        for _, e := range ve {
+            field := strings.ToLower(e.Field())
+
+            switch field {
+                case "codedocument":
+                    errors["code_document"] = "Code document wajib diisi"
+            }
+        }
+        c.JSON(http.StatusBadRequest, gin.H{
+            "status": false,
+            "message": "Validasi gagal",
+            "errors": errors,
+        })
+        return
+    }
+
+	// ambil user dari context (sesuaikan dengan middleware kamu)
+	user := c.MustGet("auth_user").(models.User)
+
+	//start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Internal server error", "error": fmt.Sprintf("%v", r)})
+        }
+    }()
+
+	var document models.BulkyDocument
+
+	// Lock row supaya aman dari race condition
+	if err := tx.
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("code_document = ?", req.CodeDocument).
+		First(&document).Error; err != nil {
+
+		tx.Rollback()
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  false,
+				"message": "Dokumen B2B tidak ditemukan dengan code: " + req.CodeDocument,
+			})
+			return
+		}
+
+		helpers.ErrorResponse(c, 500, "internal server error", err)
+		return
+	}
+
+	// cek sudah SO atau belum
+	if document.IsSo == nil && *document.IsSo == "done" {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Gagal: Dokumen " + req.CodeDocument + " sudah di SO sebelumnya.",
+		})
+		return
+	}
+
+	// update langsung pakai Updates agar lebih efisien
+	if err := tx.Model(&document).Updates(map[string]interface{}{
+		"is_so":  "done",
+		"user_so": user.ID,
+	}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        helpers.ErrorResponse(c, 500, "Gagal commit", err)
+        return
+    }
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  true,
+		"message": "Berhasil SO Dokumen: " + document.CodeDocument,
+		"data":    document,
+	})
+}
+
+//repair station
 func SoProductMigrateRepair(c *gin.Context) {
 	barcode := c.Param("barcode")
 	user := c.MustGet("auth_user").(models.User) // dari middleware auth
@@ -1048,7 +1650,7 @@ func SoProductMigrateRepair(c *gin.Context) {
     }
 
     // Cek sudah pernah SO
-    if *product.IsSo == "done" {
+    if product.IsSo != nil && *product.IsSo == "done" {
         c.JSON(422, gin.H{
             "success":  false,
             "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
@@ -1086,7 +1688,6 @@ func SoProductMigrateRepair(c *gin.Context) {
         "data":    product,
     })
 }
-
 func SoProductAbnormal(c *gin.Context) {
 	barcode := c.Param("barcode")
     user := c.MustGet("auth_user").(models.User) // dari middleware auth
@@ -1105,7 +1706,7 @@ func SoProductAbnormal(c *gin.Context) {
     }
 
     // Cek sudah pernah SO
-    if *product.IsSo == "done" {
+    if product.IsSo != nil && *product.IsSo == "done" {
         c.JSON(422, gin.H{
             "success":  false,
             "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
@@ -1143,7 +1744,6 @@ func SoProductAbnormal(c *gin.Context) {
         "data":    product,
     })
 }
-
 func SoProductDamaged(c *gin.Context) {
 	barcode := c.Param("barcode")
     user := c.MustGet("auth_user").(models.User) // dari middleware auth
@@ -1210,7 +1810,6 @@ func SoProductDamaged(c *gin.Context) {
         "data":    product,
     })
 }
-
 func SoProductNon(c *gin.Context) {
 	barcode := c.Param("barcode")
     user := c.MustGet("auth_user").(models.User) // dari middleware auth
@@ -1229,7 +1828,7 @@ func SoProductNon(c *gin.Context) {
     }
 
     // Cek sudah pernah SO
-    if *product.IsSo == "done" {
+    if product.IsSo != nil && *product.IsSo == "done" {
         c.JSON(422, gin.H{
             "success":  false,
             "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
@@ -1268,3 +1867,30 @@ func SoProductNon(c *gin.Context) {
     })
 }
 
+//=================== Helper ====================
+func performRackSO(tx *gorm.DB, rack *models.Rack, userID uint) error {
+
+	if rack.IsSo {
+		return errors.New("rack sudah di SO sebelumnya")
+	}
+
+	// Update rack
+	if err := tx.Model(rack).Updates(map[string]interface{}{
+		"is_so":  true,
+		"user_so": userID,
+	}).Error; err != nil {
+		return err
+	}
+
+	// Bulk update products (1 table saja sekarang)
+	if err := tx.Model(&models.Product{}).
+		Where("rack_id = ?", rack.ID).
+		Updates(map[string]interface{}{
+			"is_so":  "done",
+			"user_so": userID,
+		}).Error; err != nil {
+		return err
+	}
+
+	return nil
+}

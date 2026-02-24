@@ -839,7 +839,6 @@ func StaggingProductDetail(c *gin.Context) {
 
 func UpdateDataProduct(c *gin.Context) {
     type payloadUpdateProduct struct {
-        CodeDocument       string  `json:"code_document" binding:"required"`
         NewNameProduct     string  `json:"new_name_product" binding:"required"`
         NewQuantityProduct int     `json:"new_quantity_product" binding:"required,gt=0"`
         NewPriceProduct    float64 `json:"new_price_product" binding:"required,gt=0"`
@@ -1035,7 +1034,7 @@ func UpdateDataProduct(c *gin.Context) {
             UserID: &user.ID,
             ProductID: &pID,
             Type: &tipe,
-            CodeDocument: &payload.CodeDocument,
+            CodeDocument: product.CodeDocument,
             OldPriceProduct: &payload.OldPriceProduct,
             NewNameProduct: &payload.NewNameProduct,
             NewQuantityProduct: &payload.NewQuantityProduct,
@@ -1834,6 +1833,7 @@ func GetDetailProduct(c *gin.Context) {
 	baseQuery := config.DB.Model(&models.Product{}).
         Select(`
             products.id AS id,
+            products.code_document AS code_document,
             products.barcode AS new_barcode,
             products.old_barcode_product AS old_barcode,
             products.name AS new_name,
@@ -1853,6 +1853,7 @@ func GetDetailProduct(c *gin.Context) {
     // Paginate Data
     type productsData struct {
         ID          uint64  `json:"id"`
+        CodeDocument string `json:"code_document"`
         NewBarcode  string  `json:"new_barcode"`
         OldBarcode  string  `json:"old_barcode"`
         OldName        string  `json:"old_name"`
@@ -1903,6 +1904,7 @@ func GetProductsByCategory(c *gin.Context) {
         OldNameProduct     string    `json:"old_name_product"`
         OldQuantityProduct int       `json:"old_quantity_product"`
         OldPriceProduct    float64   `json:"old_price_product"`
+        StatusSo           string    `json:"status_so"`
     }
 
 	q := strings.TrimSpace(c.Query("q"))
@@ -1948,7 +1950,11 @@ func GetProductsByCategory(c *gin.Context) {
 				p.old_barcode_product,
 				p.old_name_product,
 				p.old_quantity_product,
-				p.old_price_product
+				p.old_price_product,
+                CASE
+                    WHEN p.is_so = 'done' THEN 'Sudah SO'
+                    ELSE 'Belum SO'
+                END AS status_so
 			FROM products p
 			LEFT JOIN categories c ON c.id = p.category_id
 			WHERE p.tag_color_id IS NULL
@@ -1973,10 +1979,14 @@ func GetProductsByCategory(c *gin.Context) {
 					ELSE b.status
 				END AS status,
 				b.total_price_custom AS display_price,
-				NULL,
-				NULL,
-				NULL,
-				NULL
+                NULL AS old_barcode_product,
+                NULL AS old_name_product,
+                NULL AS old_quantity_product,
+                NULL AS old_price_product,
+                CASE
+                    WHEN b.is_so = 'done' THEN 'Sudah SO'
+                    ELSE 'Belum SO'
+                END AS status_so
 			FROM bundles b
 			LEFT JOIN categories c ON c.id = b.category_id
 			WHERE b.total_price_custom >= 100000

@@ -216,7 +216,9 @@ func RouteHandler(r *gin.Engine) {
 			rg.POST("/stop-so-category", controllers.StopSoCategory) //SOController.go
 		})
 
-		/* ==================== REPAIR STATION ==================== */
+		// ========================================================================================================
+		// REPAIR STATION
+		// ========================================================================================================
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Kasir leader", "Reparasi", "Admin Kasir"}, func(rg *gin.RouterGroup) {
 			//Migrate To Repair
 			rg.GET("/migrate-repair-docs", controllers.ListMigrateRepairDocs) //DocumentController.go
@@ -228,7 +230,6 @@ func RouteHandler(r *gin.Engine) {
 			rg.PUT("/migrate-repair-docs/items/:item_id/update", controllers.MigrateProductUpdate) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/to-display", controllers.MigrateProductToDisplay) //DocumentController.go
 			rg.PUT("/migrate-repair-docs/items/:item_id/status-dump", controllers.MigrateProductToDump) //DocumentController.go
-			rg.POST("/migrate-products/:barcode/so", controllers.SoProductMigrateRepair) //SOController.go
 			rg.DELETE("/migrate-repair-docs/items/:item_id", controllers.DeleteMigrateRepairItem) //DocumentController.go
 		})
 
@@ -237,13 +238,10 @@ func RouteHandler(r *gin.Engine) {
 			rg.GET("/products/abnormal", controllers.GetProductAbnormal) //ProductController.go
 			rg.GET("/products/abnormal/export", controllers.ExportAbnormalProduct) //ProductController.go
 			rg.PUT("/products/abnormal/:product_id/to-display", controllers.AbnormalToDisplay) //ProductController.go
-			rg.POST("/products/abnormal/:barcode/so", controllers.SoProductAbnormal) //SOController.go
 			//Damaged
 			rg.GET("/products/damaged", controllers.GetProductDamageds) //ProductController.go
-			rg.POST("/products/damaged/:barcode/so", controllers.SoProductDamaged) //SOController.go
 			//Non
 			rg.GET("/products/non", controllers.GetProductNon) //ProductController.go
-			rg.POST("/products/non/:barcode/so", controllers.SoProductNon) //SOController.go
 			rg.PUT("/products/non/:product_id/to-display", controllers.NonToDisplay) //ProductController.go
 
 			//RepairDocument (route for document damaged & non)
@@ -354,5 +352,22 @@ func RouteHandler(r *gin.Engine) {
 		protected.GET("/notifications/:notif_id/:status", controllers.GetApproveSPV) //NotificationController.go
 		protected.GET("/approve-edit/:approve_id", controllers.ApproveEdit) //NotificationController.go
 		protected.GET("/reject-edit/:approve_id", controllers.RejectEdit) //NotificationController.go
+
+		// ========================================================================================================
+		// SO Product
+		// ========================================================================================================
+		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Admin Kasir", "Crew", "Reparasi", "Kasir leader", "Developer"}, func(rg *gin.RouterGroup) {
+			rg.POST("/racks/so", controllers.SoRackByBarcode) // SOController.go
+			rg.POST("/racks/:rack_id/so", controllers.SoRackByID) // SOController.go
+			rg.POST("/racks/so-staging-display", controllers.SoScanInDisplayRack) // SOController.go
+			rg.POST("/display-products/:barcode/so", controllers.SoProductDisplay) // SOController.go
+			rg.POST("/staging-products/:barcode/so", controllers.SoProductStaging) // SOController.go
+			rg.POST("/abnormal-products/:barcode/so", controllers.SoProductAbnormal) //SOController.go
+			rg.POST("/migrate-products/:barcode/so", controllers.SoProductMigrateRepair) //SOController.go
+			rg.POST("/damaged-products/:barcode/so", controllers.SoProductDamaged) //SOController.go
+			rg.POST("/non-products/:barcode/so", controllers.SoProductNon) //SOController.go
+			rg.POST("/b2b-documents/so", controllers.SoB2BDocument) //SOController.go
+		})
+		
 	}
 }

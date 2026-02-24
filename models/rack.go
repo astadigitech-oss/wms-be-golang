@@ -15,6 +15,8 @@ type Rack struct {
 	TotalNewPriceProduct 		float64 `json:"total_new_price_product" gorm:"type:decimal(15,2);default:0"`
 	TotalOldPriceProduct 		float64 `json:"total_old_price_product" gorm:"type:decimal(15,2);default:0"`
 	TotalDisplayPriceProduct 	float64 `json:"total_display_price_product" gorm:"type:decimal(15,2);default:0"`
+	IsSo						bool   	`gorm:"default:false" json:"is_so"`
+	UserSo        				*uint64  `json:"user_so"`
 	CreatedAt 					time.Time `json:"created_at"`
 	UpdatedAt 					time.Time `json:"updated_at"`
 

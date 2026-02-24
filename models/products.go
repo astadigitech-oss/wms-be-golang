@@ -33,7 +33,7 @@ type Product struct {
 	StagingStage  		*string     `gorm:"type:enum('process','approve');size:7" json:"staging_stage"` // enum
 	WarehouseType 		string      `gorm:"type:enum('type1', 'type2');default:'type1';size:5" json:"warehouse_type"`// enum
 	IsSo          		*string     `gorm:"type:enum('check','done','lost','addition');size:8" json:"is_so"`
-	UserSo        		*uint64     `gormjson:"user_so"`
+	UserSo        		*uint64     `json:"user_so"`
 	
 	CreatedAt     		time.Time   `json:"created_at"`
 	UpdatedAt     		time.Time   `json:"updated_at"`

@@ -77,6 +77,7 @@ func GetRacks(c *gin.Context) {
 			"status":  true,
 			"message": "List racks " + source,
 			"resource": gin.H{
+				"current_page": page,
                 "data":                 racks,
                 "total_rack":           total_rack,
                 "total_product_in_rack":           total_product_in_rack,
