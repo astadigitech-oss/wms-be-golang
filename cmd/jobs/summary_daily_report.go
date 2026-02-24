@@ -122,10 +122,26 @@ func calculateInbound(tx *gorm.DB, start, end time.Time) (SummaryResult, error) 
 		return total, err
 	}
 
-	total.Qty = products.Qty + bundles.Qty
-	total.OldPrice = products.OldPrice + bundles.OldPrice
-	total.NewPrice = products.NewPrice + bundles.NewPrice
-	total.DisplayPrice = products.DisplayPrice + bundles.DisplayPrice
+	// SKU
+	var sku SummaryResult
+	err = tx.Table("sku_products").
+		Select(`
+			COUNT(quantity_product) as qty,
+			COALESCE(SUM(total_price),0) as old_price,
+			COALESCE(SUM(price_product * quantity_product),0) as old_price,
+			COALESCE(SUM(price_product * quantity_product),0) as new_price,
+			COALESCE(SUM(price_product * quantity_product),0) as display_price
+		`).
+		Where("created_at >= ? AND created_at < ?", start, end).
+		Scan(&sku).Error
+	if err != nil {
+		return total, err
+	}
+
+	total.Qty = products.Qty + bundles.Qty + sku.Qty
+	total.OldPrice = products.OldPrice + bundles.OldPrice + sku.OldPrice
+	total.NewPrice = products.NewPrice + bundles.NewPrice + sku.NewPrice
+	total.DisplayPrice = products.DisplayPrice + bundles.DisplayPrice + sku.DisplayPrice
 	total.Discount = 0
 
 	return total, nil
