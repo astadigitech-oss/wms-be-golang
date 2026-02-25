@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	// "os"
 	"time"
@@ -18,54 +19,151 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+type SeederConfig struct {
+	Table string
+	Run   func() error
+}
+
+var seederRegistry = map[string]SeederConfig{
+	"role": {
+		Table: "roles",
+		Run:   func() error { return seedRoles(config.DB) },
+	},
+	"user": {
+		Table: "users",
+		Run:   func() error { return seedUsers(config.DB) },
+	},
+	"color": {
+		Table: "color_tags",
+		Run:   func() error { return seedColorTags(config.DB) },
+	},
+	"category": {
+		Table: "categories",
+		Run:   func() error { return seedCategories(config.DB) },
+	},
+	"rack": {
+		Table: "racks",
+		Run:   func() error { return seedRacks(config.DB) },
+	},
+	"loyalty": {
+		Table: "loyalty_ranks",
+		Run:   func() error { return seedLoyaltyRanks(config.DB) },
+	},
+	"buyer": {
+		Table: "buyers",
+		Run:   func() error { return seedBuyer(config.DB, 10) },
+	},
+	"destination": {
+		Table: "migrate_color_destinations",
+		Run:   func() error { return seedDestionationOlsera(config.DB) },
+	},
+}
+
+var seederOrder = []string{
+	"role",
+	"user",
+	"color",
+	"category",
+	"rack",
+	"loyalty",
+	"buyer",
+	"destination",
+}
+
 func main() {
-	config.InitDB()
-	
 	app_env := os.Getenv("APP_ENV")
 	if app_env == "production" {
 		log.Fatal("❌ Gagal: sistem saat ini dalam mode production")
 	}
 
-	log.Println("⏳ Memulai seeder...")
-	
-	// truncateTables()
-	if err := truncateTables(); err != nil {
+	// Cek argumen
+	if len(os.Args) < 2 {
+		fmt.Println("Usage:")
+		fmt.Println("  go run ./cmd/seeder/main.go --all 		(untuk seed semua table)")
+		fmt.Println("  go run ./cmd/seeder/main.go --class=name 	(untuk seed table tertentu)")
+		fmt.Println("  go run ./cmd/seeder/main.go --list 		(untuk melihat list name class)")
+		return
+	}
+
+	command := os.Args[1]
+
+	if command == "--all"{
+		config.InitDB()
+		runAllSeeders()
+		return
+
+	}else if strings.HasPrefix(command, "--class=") {
+		parts := strings.SplitN(command, "=", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			log.Fatal("❌ Format salah. Gunakan --class=namaSeeder")
+		}
+		className := parts[1]
+		config.InitDB()
+		runSingleSeeder(className)
+		return
+
+	}else if command == "--list" {
+		fmt.Println("📦 Available Seeder Classes:")
+		fmt.Println("--------------------------------")
+		fmt.Printf("  %-18s %s\n", "[class_name]", "[table_name]")
+		for name, config := range seederRegistry {
+			fmt.Printf("  - %-15s → %s\n", name, config.Table)
+		}
+		fmt.Println("--------------------------------")
+		fmt.Println("Usage: go run ./cmd/seeder/main.go --class=[class_name]")
+
+		return
+	}else{
+		fmt.Printf("Perintah '%s' tidak dikenali.\n", command)
+		fmt.Println("Gunakan -all atau -class")
+	}
+}
+
+func runAllSeeders() {
+	if err := truncateTables(); err != nil  {
 		log.Fatal("❌ Gagal :", err)
 	}
 
-	// start seed
-	if err := seedRoles(config.DB); err != nil {
-		log.Fatal("❌ Gagal :", err)
+	log.Println("🚀 Menjalankan semua seeder...")
+
+	for _, name := range seederOrder {
+		config, exists := seederRegistry[name]
+		if !exists {
+			log.Fatalf("Seeder %s tidak ditemukan", name)
+		}
+		
+		if err := config.Run(); err != nil {
+			log.Printf("→ %s ❌\n", name)
+			log.Fatal("❌ Gagal:", err)
+		}
+		log.Printf("→ %s ✅\n", name)
 	}
 
-	if err := seedUsers(config.DB); err != nil {
-		log.Fatal("❌ Gagal :", err)
+	log.Println("✅ Semua seeder selesai")
+}
+
+func runSingleSeeder(name string) {
+	config, exists := seederRegistry[name]
+	if !exists {
+		log.Fatalf("❌ Seeder '%s' tidak ditemukan", name)
 	}
 
-	if err := seedColorTags(config.DB); err != nil {
-		log.Fatal("❌ Gagal :", err)
+	if err := truncateTableByClass(name); err != nil  {
+		log.Fatal(err.Error())
 	}
 
-	if err := seedCategories(config.DB); err != nil {
-		log.Fatal("❌ Gagal :", err)
-	}
+	log.Printf("🚀 Menjalankan seeder: %s\n", name)
 
-	if err := seedRacks(config.DB); err != nil {
-		log.Fatal("❌ Gagal :", err)
+	if err := config.Run(); err != nil {
+		log.Fatal("❌ Gagal:", err)
 	}
-
-	if err := seedLoyaltyRanks(config.DB); err != nil {
-		log.Fatal("❌ Gagal :", err)
-	}
-
-	if err := seedBuyer(config.DB, 10); err != nil {
-		log.Fatal("❌ Gagal :", err)
-	}
-
-	// end seed
 
 	log.Println("✅ Seeder selesai")
 }
+
+//==================================================================
+// Seeder
+//==================================================================
 
 func seedRoles(db *gorm.DB) error {
 
@@ -183,6 +281,92 @@ func seedLoyaltyRanks(db *gorm.DB) error {
 	return db.Create(&ranks).Error
 }
 
+func seedDestionationOlsera(db *gorm.DB) error {
+	destinations := []models.MigrateColorDestination{
+	{
+		ShopName:           "Diskonter Proklamasi",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "IFRcKWdLuuB2Gk26q4l0",
+		OlseraSecretKey:    "ClHhvj03NRVYg8oln8T97b0OMy4NR5dX",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Proklamasi",
+	},
+	{
+		ShopName:           "Diskonter Pinang",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "YtqfBLJuDvku0eE45aBu",
+		OlseraSecretKey:    "X3uYTOgakrVtDosLMStNdtV4UjSZHXA9",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Pinang",
+	},
+	{
+		ShopName:           "Diskonter Cinere",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "amg8Zh4TnQfq8GxPJCoz",
+		OlseraSecretKey:    "Y4OTBpdEEbPcmzI4nqcHqjBe1tEi9cTT",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Cinere",
+	},
+	{
+		ShopName:           "Diskonter Kayu Manis",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "LTlexJCQvVblHP5p6d0X",
+		OlseraSecretKey:    "Yf5F6KVzGoEg3zcpVFmM62ROoLclc8P8",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Kayu Manis",
+	},
+	{
+		ShopName:           "Diskonter Zambrud",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "CP3CsneLGEQg9WAfnslW",
+		OlseraSecretKey:    "I5Sx2Wg6B6zqCrcOjGSvMfWORWayYBJg",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Zambrud",
+	},
+	{
+		ShopName:           "Diskonter Bintaro",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "ZCIqFazJfFlk20bGib4a",
+		OlseraSecretKey:    "33EwuVVrjS5bQ0yCpUomQBM8LAeheons",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Bintaro",
+	},
+	{
+		ShopName:           "Diskonter Pekayon",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "tA8qzA7aEynOhDTo3Avp",
+		OlseraSecretKey:    "efoGeHDTgytlJrABpVrTl3Ir1CqkpUi2",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Pekayon",
+	},
+	{
+		ShopName:           "Diskonter Harapan",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "mMiX1POMu82ucxoLpHmU",
+		OlseraSecretKey:    "bhKKotSdbfDqScvLsWHW2aoZkKog8rAW",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Harapan",
+	},
+	{
+		ShopName:           "Diskonter Loji",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "Aq3xc2bgkMCuXQvLg2Vf",
+		OlseraSecretKey:    "7mU2C3ilNtAAG4Ftp21WFsasBlpvtflb",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Loji",
+	},
+	{
+		ShopName:           "Diskonter Mayor Oking",
+		IsOlseraIntegreted: true,
+		OlseraAppID:        "IdGByAN35lZvdoBsoAkn",
+		OlseraSecretKey:    "DLrPRTvX9W0tyEXjulDhVf18jXa40eIe",
+		PhoneNumber:        "08",
+		Address:            "Diskonter Mayor Oking",
+	},
+}
+
+	return db.Create(&destinations).Error
+}
 
 func seedCategories(db *gorm.DB) error {
 	categories := []models.Category{
@@ -335,6 +519,27 @@ func seedRacks(db *gorm.DB) error {
 		Columns:   []clause.Column{{Name: "name"}, {Name: "source"}},
 		DoNothing: true,
 	}).Create(&racks).Error
+}
+
+func truncateTableByClass(className string) error {
+
+	conf, exists := seederRegistry[className]
+	if !exists {
+		return fmt.Errorf("seeder '%s' tidak memiliki mapping table", className)
+	}
+
+	// Matikan FK
+	if err := config.DB.Exec("SET FOREIGN_KEY_CHECKS = 0").Error; err != nil {
+		return err
+	}
+
+	if err := config.DB.Exec("TRUNCATE TABLE " + conf.Table).Error; err != nil {
+		config.DB.Exec("SET FOREIGN_KEY_CHECKS = 1")
+		return err
+	}
+
+	// Hidupkan FK
+	return config.DB.Exec("SET FOREIGN_KEY_CHECKS = 1").Error
 }
 
 func truncateTables() error {
