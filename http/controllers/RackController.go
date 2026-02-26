@@ -98,8 +98,31 @@ func GetRacks(c *gin.Context) {
 func RackDetail(c *gin.Context) {
 	rack_id := c.Param("rack_id")
 
+	type Item struct {
+		ID            uint64    `json:"id"`
+		Name          string    `json:"name"`
+		Barcode       string    `json:"barcode"`
+		NewPrice         float64   `json:"new_price"`
+		OldPrice         float64   `json:"old_price"`
+		DisplayPrice  float64   `json:"display_price"`
+		Status        string    `json:"status"`
+		Type          string    `json:"type"` // product / bundle
+		CreatedAt     time.Time `json:"created_at"`
+	}
+
+	// ====== Query Params ======
+	search := strings.TrimSpace(c.Query("q"))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+
+	if page < 1 {
+		page = 1
+	}
+
+	offset := (page - 1) * limit
+
 	var rack models.Rack
-	if err := config.DB.Preload("Products").First(&rack, "id = ?", rack_id).Error; err != nil {
+	if err := config.DB.First(&rack, "id = ?", rack_id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{"success": false, "message": "Rack not found"})
 		}else {
@@ -109,10 +132,98 @@ func RackDetail(c *gin.Context) {
 		return
 	}
 
+	var items []Item
+	var total int64
+
+	// ====== Base Query ======
+	baseQuery := `
+		SELECT id,
+		       name,
+		       barcode,
+		       new_price,
+		       old_price,
+		       display_price,
+		       status,
+		       type,
+		       created_at
+		FROM (
+			SELECT 
+				id,
+				name,
+				barcode,
+				price as new_price,
+				old_price_product as old_price,
+				display_price,
+				status,
+				'product' as type,
+				created_at
+			FROM products
+			WHERE rack_id = ?
+
+			UNION ALL
+
+			SELECT
+				id,
+				CONCAT('[BUNDLE] ', name_bundle) as name,
+				barcode,
+				total_price_custom as new_price,
+				total_price as old_price,
+				total_price_custom as display_price,
+				status,
+				'bundle' as type,
+				created_at
+			FROM bundles
+			WHERE rack_id = ?
+		) as combined
+		WHERE 1=1
+	`
+
+	args := []interface{}{rack.ID, rack.ID}
+
+	// ====== Filtering ======
+	if search != "" {
+		baseQuery += " AND (name LIKE ? OR barcode LIKE ?)"
+		searchLike := "%" + search + "%"
+		args = append(args, searchLike, searchLike)
+	}
+
+	// ====== Count Total ======
+	countQuery := "SELECT COUNT(*) FROM (" + baseQuery + ") as count_table"
+	if err := config.DB.Raw(countQuery, args...).Scan(&total).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "internal server error", err)
+		return
+	}
+
+	// ====== Pagination + Order ======
+	baseQuery += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	if err := config.DB.Raw(baseQuery, args...).Scan(&items).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "internal server error", err)
+		return
+	}
+
+	//pagination
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
 	c.JSON(200, gin.H{
 		"success":  true,
 		"message": "Rack Detail",
-		"resource": rack,
+		"resource": gin.H{
+			"rack_info": rack,
+			"products": gin.H{
+				"data": items,
+				"pagination": gin.H{
+					"current_page": page,
+					"total": total,
+					"links": links,
+					"per_page": limit,
+					"from": offset + 1,
+					"to": offset + limit,
+				},
+			},
+		},
 	})
 }
 
@@ -140,21 +251,39 @@ func ProductBySourceRack(c *gin.Context) {
 	}
 
 	//inisialisasi query
-	baseQuery := config.DB.Model(&models.Product{}).
+	productQuery := config.DB.Model(&models.Product{}).
 		Select(`
 			products.id AS id,
 			products.name AS product_name,
 			products.barcode AS product_barcode,
 			products.old_barcode_product AS product_old_barcode,
-			categories.name_category AS category_name
+			COALESCE(categories.name_category, 'Unknown') AS category_name,
+			'product' AS source_type,
+			products.created_at
 		`).
 		Joins("LEFT JOIN categories ON categories.id = products.category_id").
 		Where("products.tag_color_id IS NULL").
 		Where("products.category_id IS NOT NULL").
 		Where("products.rack_id IS NULL").
-		Where("products.status = ?", "display").
+		Where("products.status IN ?", []string{"display", "expired", "slow_moving"}).
 		Where("products.quality = ?", "lolos").
 		Where("products.location_type = ?", locationType)
+	
+	bundleQuery := config.DB.Model(&models.Bundle{}).
+		Select(`
+			bundles.id AS id,
+			CONCAT('[BUNDLE] ', bundles.name_bundle) AS product_name,
+			bundles.barcode AS product_barcode,
+			NULL AS product_old_barcode,
+			COALESCE(categories.name_category, 'Unknown') AS category_name,
+			'bundle' AS source_type,
+			bundles.created_at
+		`).
+		Joins("LEFT JOIN categories ON categories.id = bundles.category_id").
+		Where("bundles.tag_color_id IS NULL").
+		Where("bundles.category_id IS NOT NULL").
+		Where("bundles.rack_id IS NULL").
+		Where("bundles.status != ?", "sale")
 
 	// Filter by rack name
 	if rackID != "" {
@@ -189,24 +318,38 @@ func ProductBySourceRack(c *gin.Context) {
 			}
 		}
 
-		baseQuery = baseQuery.Where(config.DB.Where(
-            strings.Join(conditions, " OR "),
-            values...
-		))
+		if len(conditions) > 0 {
+			cond := strings.Join(conditions, " OR ")
+			productQuery = productQuery.Where(config.DB.Where(cond, values...))
+			bundleQuery = bundleQuery.Where(config.DB.Where(cond, values...))
+		}
 	}
 
 	// Searching
 	if q != "" {
 		searchPattern := "%" + q + "%"
-		baseQuery = baseQuery.Where("(products.name LIKE ? OR "+
-            "products.barcode LIKE ? OR " + 
-            "products.old_barcode_product LIKE ? OR " + 
-			"categories.name_category LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
+		productQuery = productQuery.Where(
+			"(products.name LIKE ? OR products.barcode LIKE ? OR products.old_barcode_product LIKE ? OR categories.name_category LIKE ?)",
+			searchPattern, searchPattern, searchPattern, searchPattern,
+		)
+
+		bundleQuery = bundleQuery.Where(
+			"(bundles.name_bundle LIKE ? OR bundles.barcode LIKE ? OR categories.name_category LIKE ?)",
+			searchPattern, searchPattern, searchPattern,
+		)
+	}
+
+	var finalQuery *gorm.DB
+	if source == "display" {
+		unionQuery := config.DB.Raw("? UNION ALL ?",productQuery,bundleQuery)
+		finalQuery = config.DB.Table("(?) as combined", unionQuery)
+	} else {
+		finalQuery = productQuery
 	}
 
     // Hitung total data
     var totalData int64
-    baseQuery.Session(&gorm.Session{}).Count(&totalData)
+    finalQuery.Session(&gorm.Session{}).Count(&totalData)
 
 	type productData struct {
 		ID                uint   `json:"id"`
@@ -214,12 +357,13 @@ func ProductBySourceRack(c *gin.Context) {
 		ProductBarcode    string `json:"product_barcode"`
 		ProductOldBarcode string `json:"product_old_barcode"`
 		CategoryName      string `json:"category_name"`
+		SourceType		  string `json:"source_type"`
 	}
 
 	var products []productData
     // Ambil data detail
-    err := baseQuery.Session(&gorm.Session{}).
-        Order("products.created_at DESC").
+    err := finalQuery.Session(&gorm.Session{}).
+        Order("created_at DESC").
         Limit(limit).Offset(offset).
         Find(&products).Error
 
@@ -500,9 +644,11 @@ func AddProductToRack(c *gin.Context) {
 		}
 	}()
 
-	// Cari Produk & Join ke Category
-	var product models.Product
-	query := tx.Preload("Category")
+	var (
+		product models.Product
+		bundle  models.Bundle
+		isBundle bool
+	)
 
 	// Filter berdasarkan source (staging vs display)
 	locationType := "main"
@@ -510,19 +656,39 @@ func AddProductToRack(c *gin.Context) {
 		locationType = "staging"
 	}
 
-	if err := query.Where("location_type = ?", locationType).
+	err = tx.Preload("Category").
+		Where("location_type = ?", locationType).
 		Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
-		First(&product).Error; err != nil {
+		First(&product).Error
 
-		tx.Rollback()
-		c.JSON(404, gin.H{"status": false, "message": "Produk tidak ditemukan di source " + rack.Source})
-		return
+	if err != nil {
+		// Kalau product tidak ada → coba bundle
+		errBundle := tx.Preload("Category").
+			Where("barcode = ?", barcode).
+			First(&bundle).Error
+
+		if errBundle != nil {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"status": false,
+				"message": "Produk / Bundle tidak ditemukan di source " + rack.Source,
+			})
+			return
+		}
+
+		isBundle = true
+	}
+
+	prodCatName := ""
+	if isBundle {
+		prodCatName = strings.ToUpper(strings.TrimSpace(bundle.Category.NameCategory))
+	}else {
+		prodCatName = strings.ToUpper(strings.TrimSpace(product.Category.NameCategory))
 	}
 
 	// Validasi Kesesuaian Kategori (Logic Parsing Nama Rak)
-	if rack.Name != "" && product.Category != nil {
+	if rack.Name != "" && prodCatName != "" {
 		rackName := strings.ToUpper(strings.TrimSpace(rack.Name))
-		prodCatName := strings.ToUpper(strings.TrimSpace(product.Category.NameCategory))
 
 		// Parsing Core Name Rak
 		rackCategoryCore := rackName
@@ -556,7 +722,7 @@ func AddProductToRack(c *gin.Context) {
 	}
 
 	// Cek apakah sudah di rak lain
-	if product.RackID != nil {
+	if !isBundle && product.RackID != nil {
 		var otherRack models.Rack
 		config.DB.First(&otherRack, *product.RackID)
 		tx.Rollback()
@@ -564,30 +730,46 @@ func AddProductToRack(c *gin.Context) {
 		return
 	}
 
-	// Update Rak ID Produk
-	rackID64 := uint64(rack.ID)
-	if err := tx.Model(&product).Update("rack_id", rackID64).Error; err != nil {
+	if isBundle && bundle.RackID != nil {
+		var otherRack models.Rack
+		config.DB.First(&otherRack, *bundle.RackID)
 		tx.Rollback()
-		c.JSON(500, gin.H{"status": false, "message": "Gagal update produk", "error": err.Error()})
+		c.JSON(422, gin.H{"status": false, "message": "Bundle sudah berada di rak lain: " + otherRack.Name})
 		return
 	}
 
+	// Update Rak ID Produk
+	rackID64 := uint64(rack.ID)
+	if isBundle {
+		if err := tx.Model(&bundle).Update("rack_id", rackID64).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal update produk", "error": err.Error()})
+			return
+		}
+	}else {
+		if err := tx.Model(&product).Update("rack_id", rackID64).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal update produk", "error": err.Error()})
+			return
+		}
+	}
+
 	//update rack
-	if err := tx.Model(&rack).Updates(map[string]interface{}{
-		"total_data":                    gorm.Expr("total_data + ?", 1),
-		"total_new_price_product":      gorm.Expr("total_new_price_product + ?", product.Price),
-		"total_old_price_product":      gorm.Expr("total_old_price_product + ?", product.OldPriceProduct),
-		"total_display_price_product":  gorm.Expr("total_display_price_product + ?", product.DisplayPrice),
-	}).Error; err != nil {
+	if err := helpers.RecalculateRack(tx, rackID64); err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal update statistik rak", "error": err.Error()})
 		return
 	}
 
 	source := "display"
-	if *product.LocationType == "staging" {
+	if !isBundle && *product.LocationType == "staging" {
 		source = "staging"
 	}
+
+	if isBundle {
+		source = "bundle"
+	}
+
 	rack_history := models.RackHistory{
 		UserID: uint64(user.ID),
 		RackID: uint64(rack.ID),
@@ -611,7 +793,6 @@ func AddProductToRack(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"status":  true,
 		"message": "Berhasil menambahkan produk ke Rak " + rack.Name,
-		"data":    product,
 	})
 }
 
@@ -623,11 +804,7 @@ func RemoveProductFromRack(c *gin.Context) {
 		return
 	}
 
-	productID, err := strconv.ParseUint(c.Param("product_id"), 10, 64)
-	if err != nil {
-		c.JSON(400, gin.H{"message": "product_id tidak valid"})
-		return
-	}
+	barcode := c.Param("barcode")
 
 	var rack models.Rack
 	if err := config.DB.First(&rack, rackID).Error; err != nil {
@@ -648,48 +825,74 @@ func RemoveProductFromRack(c *gin.Context) {
 	}()
 
 	// Cari Produk
-	var product models.Product
-	query := tx.Where("id = ?", productID).Where("rack_id = ?", rack.ID)
-
+	var (
+		product models.Product
+		bundle  models.Bundle
+		isBundle bool
+	)
 	// Filter berdasarkan source (staging vs display)
 	locationType := "main"
 	if rack.Source == "staging" {
 		locationType = "staging"
 	}
 
-	if err := query.Where("location_type = ?", locationType).First(&product).Error; err != nil {
-		tx.Rollback()
-		c.JSON(404, gin.H{"status": false, "message": "Produk tidak ditemukan di rack ini: " + rack.Name})
-		return
+	err = tx.
+		Where("location_type = ?", locationType).
+		Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+		First(&product).Error
+
+	if err != nil {
+		// Kalau product tidak ada → coba bundle
+		errBundle := tx.
+			Where("barcode = ?", barcode).
+			First(&bundle).Error
+
+		if errBundle != nil {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"status": false,
+				"message": "Produk / Bundle tidak ditemukan di rack " + rack.Name,
+			})
+			return
+		}
+
+		isBundle = true
 	}
 
 	// Update Rak ID Produk
-	if err := tx.Model(&product).Updates(map[string]interface{}{
-        "rack_id": nil,
-    }).Error; err != nil {
-        tx.Rollback()
-        c.JSON(500, gin.H{"status": false, "message": "Gagal update produk", "error": err.Error()})
-        return
-    }
-
-	oldPrice := product.OldPriceProduct
+	if isBundle {
+		if err := tx.Model(&bundle).Updates(map[string]interface{}{
+			"rack_id": nil,
+		}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal update bundle", "error": err.Error()})
+			return
+		}
+	}else {
+		if err := tx.Model(&product).Updates(map[string]interface{}{
+			"rack_id": nil,
+		}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"status": false, "message": "Gagal update produk", "error": err.Error()})
+			return
+		}
+	}
 
 	//update rack
-	if err := tx.Model(&rack).Updates(map[string]interface{}{
-		"total_data":                    gorm.Expr("total_data - ?", 1),
-		"total_new_price_product":      gorm.Expr("total_new_price_product - ?", product.Price),
-		"total_old_price_product":      gorm.Expr("total_old_price_product - ?", oldPrice),
-		"total_display_price_product":  gorm.Expr("total_display_price_product - ?", product.DisplayPrice),
-	}).Error; err != nil {
+	if err := helpers.RecalculateRack(tx, uint64(rack.ID)); err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal update statistik rak", "error": err.Error()})
 		return
 	}
 
 	source := "display"
-	if *product.LocationType == "staging" {
+	if !isBundle && *product.LocationType == "staging" {
 		source = "staging"
 	}
+	if isBundle {
+		source = "bundle"
+	}
+
 	rack_history := models.RackHistory{
 		UserID: uint64(user.ID),
 		RackID: uint64(rack.ID),
@@ -770,6 +973,7 @@ func DeleteRack(c *gin.Context) {
 }
 
 func MoveRackToDisplay(c *gin.Context) {
+	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
 	if err != nil {
 		c.JSON(400, gin.H{"message": "rack_id tidak valid"})
@@ -797,6 +1001,12 @@ func MoveRackToDisplay(c *gin.Context) {
 		}
 
 		tx.Rollback()
+		return
+	}
+
+	if !rack.IsSo {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s belum di so, tidak bisa pindah ke displa", rack.Name), nil);
 		return
 	}
 
@@ -839,19 +1049,41 @@ func MoveRackToDisplay(c *gin.Context) {
 		return
 	}
 
-	//update rack display
+	//recalculate rack display
 	if err := helpers.RecalculateRack(tx, uint64(parentRack.ID)); err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal update statistik rak display", "error": err.Error()})
 		return
 	}
 
-	//update rack staging
+	//recalculate rack staging
 	if err := helpers.RecalculateRack(tx, uint64(rack.ID)); err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal memindahkan rak", "error": err.Error()})
 		return
 	}
+
+	// update rack
+	if err := tx.Model(&rack).Updates(map[string]interface{}{
+		"user_display_id": user.ID,
+		"move_to_display_at": helpers.GetCurentTime(),
+	}).Error; err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal update rack", err)
+		return
+	}
+
+	// rack_history := models.RackHistory{
+	// 	UserID: uint64(user.ID),
+	// 	RackID: uint64(rack.ID),
+	// 	Action: "MOVE",
+	// 	Source: &rack.Source,
+	// }
+	// if err := tx.Create(&rack_history).Error; err != nil {
+	// 	tx.Rollback()
+	// 	helpers.ErrorResponse(c, 500, "internal server error", err)
+	// 	return
+	// }
 
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
@@ -990,7 +1222,7 @@ func GetRackInsertionStats(c *gin.Context) {
 	})
 }
 
-func ExportRackHistory(c *gin.Context) {
+func ExportRackHistoryInsertation(c *gin.Context) {
 	source := c.Query("source")
 	date := c.DefaultQuery("date", time.Now().Format("2006-01-02"))
 
@@ -1000,6 +1232,14 @@ func ExportRackHistory(c *gin.Context) {
 	}
 
 	db := config.DB
+
+	parsedDate, errParse := helpers.ParseFlexibleDate(date) 
+	if errParse != nil {
+		helpers.ErrorResponse(c, 400, "Gagal Parsed Date", errParse)
+		return
+	}
+	start := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.Local)
+	end := start.Add(24*time.Hour).Add(-time.Nanosecond)
 
 	// Subquery untuk ambil ID terakhir per barcode di tanggal tersebut
 	latestSubQuery := db.
@@ -1034,6 +1274,7 @@ func ExportRackHistory(c *gin.Context) {
 		Joins("LEFT JOIN users u ON u.id = rh.user_id").
 		Where("rh.action = ?", "IN").
 		Where("r.source = ?", source).
+		Where("rh.created_at BETWEEN ? AND ?", start, end).
 		Order("rh.rack_id ASC").
 		Order("rh.created_at DESC").
 		Scan(&histories).Error
@@ -1104,6 +1345,152 @@ func ExportRackHistory(c *gin.Context) {
 	file.SetCellStyle(sheet, fmt.Sprintf("A%d", 2), fmt.Sprintf("F%d", baris-1), border)
 
 	fileName := fmt.Sprintf("DETAIL_RAK_%s_%s.xlsx", strings.ToUpper(source), date)
+
+	// Save file
+	dir := "./public/exports"
+	os.MkdirAll(dir, 0755)
+
+	fullPath := filepath.Join(dir, fileName)
+	if err := file.SaveAs(fullPath); err != nil {
+		helpers.ErrorResponse(c, 500, "Internal Server Erorr", err)
+		return
+	}
+
+	downloadURL := fmt.Sprintf("%s/public/exports/%s", os.Getenv("APP_URL"), fileName)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "File berhasil diunduh",
+		"url":     downloadURL,
+	})
+}
+
+func ExportDataRack(c *gin.Context) {
+	source := c.Query("source")
+	// date := c.DefaultQuery("date", time.Now().Format("2006-01-02"))
+
+	if source != "staging" && source != "display" {
+		helpers.ErrorResponse(c, 422, "Source harus staging atau display", nil)
+		return
+	}
+
+	db := config.DB
+
+	parsedDate := helpers.GetCurentTime()
+	start := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.Local)
+	end := start.Add(24*time.Hour).Add(-time.Nanosecond)
+
+	// type rackData struct {
+	// 	NameRack	string
+	// 	Barcode		string
+	// 	Category		string
+	// 	Status		string
+	// 	Source		string
+	// 	TotalData		int64
+	// 	TotalOldPrice		float64
+	// 	TotalNewPrice		float64
+	// 	CreatedAt			time.Time
+	// 	SoAt			time.Time
+	// 	ToDisplayAt			time.Time
+	// 	UserSo			string
+	// 	UserDisplay			string
+	// }
+	var histories []models.Rack
+	err := db.Model(&models.Rack{}).Preload("UserSO").Preload("UserDisplay").
+		Where("source = ?", source).
+		Where("created_at BETWEEN ? AND ?", start, end).
+		Order("created_at DESC").
+		Find(&histories).Error
+
+	if err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data rack", err)
+		return
+	}
+
+	// Generate Excel
+	file := excelize.NewFile()
+	sheet := "Sheet1"
+	file.SetSheetName("Sheet1", sheet)
+
+	// Style Config 
+	headerStyle, _ := helpers.BuildStyle(
+		file, 
+		config.ExcelStyles["font_bold"],
+		config.ExcelStyles["fill_gray"],
+	)
+	file.SetCellStyle(sheet, "A1", "M1", headerStyle)
+
+	// Header
+	file.SetColWidth(sheet, "A", "A", 40)
+	file.SetColWidth(sheet, "B", "B", 16)
+	file.SetColWidth(sheet, "C", "C", 35)
+	file.SetColWidth(sheet, "D", "D", 18)
+	file.SetColWidth(sheet, "E", "E", 10)
+	file.SetColWidth(sheet, "F", "M", 15)
+	headers := []string{
+		"Nama Rak",
+		"Barcode",
+		"Kategori",
+		"Status",
+		"Source",
+		"Total Data",
+		"Total Old Price",
+		"Total New Price",
+		"Waktu Buat Rak",
+		"Waktu SO",
+		"Waktu To Display",
+		"User SO",
+		"User Display",
+	}
+
+	for i, h := range headers {
+		cell := fmt.Sprintf("%c1", 'A'+i)
+		file.SetCellValue(sheet, cell, h)
+	}
+
+	// Data
+	baris := 2
+	for _, row := range histories {
+		status := row.Source
+		if row.Source == "staging" && row.MoveToDisplayAt != nil {
+			status = "To Display"
+		}
+		so_at := "-"
+		if row.SoAt != nil {
+			so_at = row.SoAt.Format("2006-01-02 15:04")
+		}
+		move_at := "-"
+		if row.MoveToDisplayAt != nil {
+			move_at = row.MoveToDisplayAt.Format("2006-01-02 15:04")
+		}
+		user_so := "-"
+		if row.UserSO != nil {
+			user_so = row.UserSO.Name
+		}
+		user_display := "-"
+		if row.UserDisplay != nil {
+			user_display = row.UserDisplay.Name
+		}
+
+		file.SetCellValue(sheet, fmt.Sprintf("A%d", baris), row.Name)
+		file.SetCellValue(sheet, fmt.Sprintf("B%d", baris), row.Barcode)
+		file.SetCellValue(sheet, fmt.Sprintf("C%d", baris), helpers.NormalizeRackName(row.Name))
+		file.SetCellValue(sheet, fmt.Sprintf("D%d", baris), status)
+		file.SetCellValue(sheet, fmt.Sprintf("E%d", baris), row.Source)
+		file.SetCellValue(sheet, fmt.Sprintf("F%d", baris), row.TotalData)
+		file.SetCellValue(sheet, fmt.Sprintf("G%d", baris), row.TotalOldPriceProduct)
+		file.SetCellValue(sheet, fmt.Sprintf("H%d", baris), row.TotalNewPriceProduct)
+		file.SetCellValue(sheet, fmt.Sprintf("I%d", baris), row.CreatedAt.Format("2006-01-02 15:04"))
+		file.SetCellValue(sheet, fmt.Sprintf("J%d", baris), so_at)
+		file.SetCellValue(sheet, fmt.Sprintf("K%d", baris), move_at)
+		file.SetCellValue(sheet, fmt.Sprintf("L%d", baris), user_so)
+		file.SetCellValue(sheet, fmt.Sprintf("M%d", baris), user_display)
+
+		baris++
+	}
+	// file.SetCellStyle(sheet, fmt.Sprintf("A%d", 2), fmt.Sprintf("F%d", baris-1), border)
+
+	fileName := fmt.Sprintf("DATA_RAK_%s_%s.xlsx", strings.ToUpper(source), parsedDate.Format("2006-01-02"))
 
 	// Save file
 	dir := "./public/exports"

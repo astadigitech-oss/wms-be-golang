@@ -3,7 +3,7 @@ package controllers
 import (
 	"database/sql"
 	"fmt"
-	services "liquid8/wms/Services"
+	"liquid8/wms/services"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"

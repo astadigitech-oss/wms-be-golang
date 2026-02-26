@@ -16,12 +16,18 @@ type Rack struct {
 	TotalOldPriceProduct 		float64 `json:"total_old_price_product" gorm:"type:decimal(15,2);default:0"`
 	TotalDisplayPriceProduct 	float64 `json:"total_display_price_product" gorm:"type:decimal(15,2);default:0"`
 	IsSo						bool   	`gorm:"default:false" json:"is_so"`
-	UserSo        				*uint64  `json:"user_so"`
+	UserSoID        				*uint64  `json:"user_so_id"`
+	SoAt 						*time.Time `json:"so_at"`
+	MoveToDisplayAt				*time.Time	`json:"move_to_display_at"`
+	UserDisplayID					*uint64	  `json:"user_display_id"`
 	CreatedAt 					time.Time `json:"created_at"`
 	UpdatedAt 					time.Time `json:"updated_at"`
 
 	// Relations
 	// Category *Category `json:"category,omitempty" gorm:"foreignKey:CategoryID;"`
 	Rack *Rack `json:"rack,omitempty" gorm:"foreignKey:DisplayRackID;"`
-	Products []Product `json:"products" gorm:"foreignKey:RackID"`
+	UserSO *User `json:"user_so,omitempty" gorm:"foreignKey:UserSoID;references:ID;"`
+	UserDisplay *User `json:"user_display,omitempty" gorm:"foreignKey:UserDisplayID;references:ID;"`
+	Products []Product `json:"products,omitempty" gorm:"foreignKey:RackID"`
+	Bundles []Bundle `json:"bundles,omitempty" gorm:"foreignKey:RackID"`
 }

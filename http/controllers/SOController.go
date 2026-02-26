@@ -1876,7 +1876,8 @@ func performRackSO(tx *gorm.DB, rack *models.Rack, userID uint) error {
 	// Update rack
 	if err := tx.Model(rack).Updates(map[string]interface{}{
 		"is_so":  true,
-		"user_so": userID,
+		"user_so_id": userID,
+		"so_at": helpers.GetCurentTime(),
 	}).Error; err != nil {
 		return err
 	}
@@ -1890,6 +1891,16 @@ func performRackSO(tx *gorm.DB, rack *models.Rack, userID uint) error {
 		}).Error; err != nil {
 		return err
 	}
+
+	// rack_history := models.RackHistory{
+	// 	UserID: uint64(userID),
+	// 	RackID: uint64(rack.ID),
+	// 	Action: "SO",
+	// 	Source: &rack.Source,
+	// }
+	// if err := tx.Create(&rack_history).Error; err != nil {
+	// 	return err
+	// }
 
 	return nil
 }

@@ -4,6 +4,7 @@ import "time"
 
 type Bundle struct {
 	ID              uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	RackID  	  		*uint64     `json:"rack_id"`
 	UserID          *uint64    `gorm:"index" json:"user_id"`
 	NameBundle      string    `gorm:"size:255;not null" json:"name_bundle"`
 	TotalPrice      float64   `gorm:"type:decimal(18,2);default:0" json:"total_price"` //total old price productnya

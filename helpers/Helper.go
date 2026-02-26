@@ -1,7 +1,11 @@
 package helpers
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	crand "crypto/rand"
 	"database/sql"
+	"io"
 	"liquid8/wms/config"
 	"liquid8/wms/models"
 	"net/url"
@@ -11,10 +15,11 @@ import (
 	"runtime"
 
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	mrand "math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -113,7 +118,7 @@ func RandomString(n int) string {
 	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	ret := make([]byte, n)
 	for i := 0; i < n; i++ {
-		ret[i] = letters[rand.Intn(len(letters))]
+		ret[i] = letters[mrand.Intn(len(letters))]
 	}
 	return string(ret)
 }
@@ -574,7 +579,8 @@ func RecalculateRack(db *gorm.DB, rackID uint64) error {
 		TotalDisplayPrice float64
 	}
 
-	var res result
+	var product result
+	var bundle result
 
 	// ===== 1. Kalkulasi dari table products =====
 	err := db.Table("products").
@@ -586,24 +592,54 @@ func RecalculateRack(db *gorm.DB, rackID uint64) error {
 		`).
 		Where("rack_id = ?", rackID).
 		Where("status IN ?", []string{"display", "expired", "slow_moving"}).
-		Where("quality ?", "lolos").
-		Scan(&res).Error
+		Where("quality = ?", "lolos").
+		Scan(&product).Error
 
 	if err != nil {
 		return err
 	}
 
-	// ===== 2. Update ke rack =====
+	// ===== 2. Kalkulasi dari table bundles =====
+	err = db.Table("bundles").
+		Select(`
+			COUNT(*) as total_data,
+			COALESCE(SUM(total_price_custom), 0) as total_new_price,
+			COALESCE(SUM(total_price), 0) as total_old_price,
+			COALESCE(SUM(total_price_custom), 0) as total_display_price
+		`).
+		Where("rack_id = ?", rackID).
+		Where("status != ?", "sale").
+		Scan(&bundle).Error
+
+	if err != nil {
+		return err
+	}
+
+	// ===== 3. Update ke rack =====
 	err = db.Table("racks").
 		Where("id = ?", rackID).
 		Updates(map[string]interface{}{
-			"total_data":                   res.TotalData,
-			"total_new_price_product":      res.TotalNewPrice,
-			"total_old_price_product":      res.TotalOldPrice,
-			"total_display_price_product":  res.TotalDisplayPrice,
+			"total_data":                   product.TotalData + bundle.TotalData,
+			"total_new_price_product":      product.TotalNewPrice + bundle.TotalNewPrice,
+			"total_old_price_product":      product.TotalOldPrice + bundle.TotalOldPrice,
+			"total_display_price_product":  product.TotalDisplayPrice + bundle.TotalDisplayPrice,
 		}).Error
 
 	return err
+}
+
+func NormalizeRackName(rackname string) string {
+	rackName := strings.ToUpper(strings.TrimSpace(rackname))
+	// ambil string setelah tanda "-"
+	if idx := strings.Index(rackName, "-"); idx != -1 {
+		rackName = rackName[idx+1:]
+	}
+	// ganti sisa "-" jadi spasi
+	rackName = strings.ReplaceAll(rackName, "-", " ")
+	re := regexp.MustCompile(`\s+\d+$`)
+	rackName = re.ReplaceAllString(rackName, "")
+
+	return rackName
 }
 
 
@@ -645,6 +681,13 @@ func GetToday() string {
 	)
 
 	return startOfDayInJakarta.Format("2006-01-02")
+}
+
+func GetCurentTime() time.Time {
+	location,_ := time.LoadLocation("Asia/Jakarta")
+	nowInJakarta := time.Now().In(location)
+
+	return nowInJakarta
 }
 
 func BuildPaginationLinks(
@@ -1394,3 +1437,69 @@ func MergeStyles(styles ...excelize.Style) *excelize.Style {
 	return result
 }
 
+//=================== Encryption ========================
+func Encrypt(text string) (string, error) {
+	appKey := os.Getenv("APP_KEY")
+	decodedKey, err := base64.StdEncoding.DecodeString(appKey)
+	if err != nil {
+		return "", err
+	}
+
+	if len(decodedKey) != 32 {
+		return "", fmt.Errorf("APP_KEY harus 32 byte")
+	}
+
+	block, err := aes.NewCipher(decodedKey)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(crand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(text), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func Decrypt(cryptoText string) (string, error) {
+	appKey := os.Getenv("APP_KEY")
+	decodedKey, err := base64.StdEncoding.DecodeString(appKey)
+	if err != nil {
+		return "", err
+	}
+	if len(decodedKey) != 32 {
+		return "", fmt.Errorf("APP_KEY harus 32 byte")
+	}
+
+	data, err := base64.StdEncoding.DecodeString(cryptoText)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(decodedKey)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}

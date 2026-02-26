@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"errors"
-	services "liquid8/wms/Services"
+	"liquid8/wms/services"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
@@ -1774,18 +1774,11 @@ func AddMigrateProduct(c *gin.Context) {
 	}
 
 	if rackID != nil {
-		result := tx.Model(&models.Rack{}).Where("id = ?", rackID).Updates(map[string]interface{}{
-			"total_data":                    gorm.Expr("total_data - ?", 1),
-			"total_new_price_product":      gorm.Expr("total_new_price_product - ?", product.Price),
-			"total_old_price_product":      gorm.Expr("total_old_price_product - ?", product.OldPriceProduct),
-			"total_display_price_product":  gorm.Expr("total_display_price_product - ?", product.DisplayPrice),
-		})
-
-		if result.RowsAffected == 0 {
+		if err := helpers.RecalculateRack(tx, *rackID); err != nil {
 			tx.Rollback()
-			c.JSON(404, gin.H{
+			c.JSON(400, gin.H{
 				"success": false,
-				"message": "Rak tidak ditemukan atau tidak berubah",
+				"message": "Gagal recalculate rack",
 			})
 			return
 		}

@@ -120,15 +120,16 @@ func RouteHandler(r *gin.Engine) {
 			
 			/* ==================== RACK ==================== */
 			rg.GET("/racks", controllers.GetRacks) //RackController.go
+			rg.GET("/racks/export", controllers.ExportDataRack) //RackController.go
 			rg.GET("/racks/history-stats", controllers.GetRackInsertionStats) //RackController.go
-			rg.GET("/racks/history-stats/export", controllers.ExportRackHistory) //RackController.go
+			rg.GET("/racks/history-stats/export", controllers.ExportRackHistoryInsertation) //RackController.go
 			rg.GET("/racks/:rack_id/detail", controllers.RackDetail) //RackController.go
 			rg.GET("/racks/list-product", controllers.ProductBySourceRack) //RackController.go
 			rg.POST("/racks", controllers.AddRack) //RackController.go
 			rg.POST("/racks/:rack_id/move-to-display", controllers.MoveRackToDisplay) //RackController.go
 			rg.PUT("/racks/:rack_id", controllers.UpdateRack) //RackController.go
 			rg.POST("/racks/:rack_id/add-product/:barcode", controllers.AddProductToRack) //RackController.go
-			rg.DELETE("/racks/:rack_id/remove-product/:product_id", controllers.RemoveProductFromRack) //RackController.go
+			rg.DELETE("/racks/:rack_id/remove-product/:barcode", controllers.RemoveProductFromRack) //RackController.go
 			rg.DELETE("/racks/:rack_id", controllers.DeleteRack) //RackController.go	
 			// protected.PUT("/racks/:id", controllers.UpdateRack) //RackController.go
 		})
