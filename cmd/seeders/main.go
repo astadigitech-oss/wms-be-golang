@@ -283,89 +283,101 @@ func seedLoyaltyRanks(db *gorm.DB) error {
 
 func seedDestionationOlsera(db *gorm.DB) error {
 	destinations := []models.MigrateColorDestination{
-	{
-		ShopName:           "Diskonter Proklamasi",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "IFRcKWdLuuB2Gk26q4l0",
-		OlseraSecretKey:    "ClHhvj03NRVYg8oln8T97b0OMy4NR5dX",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Proklamasi",
-	},
-	{
-		ShopName:           "Diskonter Pinang",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "YtqfBLJuDvku0eE45aBu",
-		OlseraSecretKey:    "X3uYTOgakrVtDosLMStNdtV4UjSZHXA9",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Pinang",
-	},
-	{
-		ShopName:           "Diskonter Cinere",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "amg8Zh4TnQfq8GxPJCoz",
-		OlseraSecretKey:    "Y4OTBpdEEbPcmzI4nqcHqjBe1tEi9cTT",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Cinere",
-	},
-	{
-		ShopName:           "Diskonter Kayu Manis",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "LTlexJCQvVblHP5p6d0X",
-		OlseraSecretKey:    "Yf5F6KVzGoEg3zcpVFmM62ROoLclc8P8",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Kayu Manis",
-	},
-	{
-		ShopName:           "Diskonter Zambrud",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "CP3CsneLGEQg9WAfnslW",
-		OlseraSecretKey:    "I5Sx2Wg6B6zqCrcOjGSvMfWORWayYBJg",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Zambrud",
-	},
-	{
-		ShopName:           "Diskonter Bintaro",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "ZCIqFazJfFlk20bGib4a",
-		OlseraSecretKey:    "33EwuVVrjS5bQ0yCpUomQBM8LAeheons",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Bintaro",
-	},
-	{
-		ShopName:           "Diskonter Pekayon",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "tA8qzA7aEynOhDTo3Avp",
-		OlseraSecretKey:    "efoGeHDTgytlJrABpVrTl3Ir1CqkpUi2",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Pekayon",
-	},
-	{
-		ShopName:           "Diskonter Harapan",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "mMiX1POMu82ucxoLpHmU",
-		OlseraSecretKey:    "bhKKotSdbfDqScvLsWHW2aoZkKog8rAW",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Harapan",
-	},
-	{
-		ShopName:           "Diskonter Loji",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "Aq3xc2bgkMCuXQvLg2Vf",
-		OlseraSecretKey:    "7mU2C3ilNtAAG4Ftp21WFsasBlpvtflb",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Loji",
-	},
-	{
-		ShopName:           "Diskonter Mayor Oking",
-		IsOlseraIntegreted: true,
-		OlseraAppID:        "IdGByAN35lZvdoBsoAkn",
-		OlseraSecretKey:    "DLrPRTvX9W0tyEXjulDhVf18jXa40eIe",
-		PhoneNumber:        "08",
-		Address:            "Diskonter Mayor Oking",
-	},
-}
+		{
+			ShopName:           "Diskonter Proklamasi",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "IFRcKWdLuuB2Gk26q4l0",
+			OlseraSecretKey:    "ClHhvj03NRVYg8oln8T97b0OMy4NR5dX" ,
+			PhoneNumber:        "08",
+			Address:            "Diskonter Proklamasi",
+		},
+		{
+			ShopName:           "Diskonter Pinang",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "YtqfBLJuDvku0eE45aBu",
+			OlseraSecretKey:    "X3uYTOgakrVtDosLMStNdtV4UjSZHXA9",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Pinang",
+		},
+		{
+			ShopName:           "Diskonter Cinere",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "amg8Zh4TnQfq8GxPJCoz",
+			OlseraSecretKey:    "Y4OTBpdEEbPcmzI4nqcHqjBe1tEi9cTT",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Cinere",
+		},
+		{
+			ShopName:           "Diskonter Kayu Manis",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "LTlexJCQvVblHP5p6d0X",
+			OlseraSecretKey:    "Yf5F6KVzGoEg3zcpVFmM62ROoLclc8P8",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Kayu Manis",
+		},
+		{
+			ShopName:           "Diskonter Zambrud",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "CP3CsneLGEQg9WAfnslW",
+			OlseraSecretKey:    "I5Sx2Wg6B6zqCrcOjGSvMfWORWayYBJg",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Zambrud",
+		},
+		{
+			ShopName:           "Diskonter Bintaro",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "ZCIqFazJfFlk20bGib4a",
+			OlseraSecretKey:    "33EwuVVrjS5bQ0yCpUomQBM8LAeheons",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Bintaro",
+		},
+		{
+			ShopName:           "Diskonter Pekayon",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "tA8qzA7aEynOhDTo3Avp",
+			OlseraSecretKey:    "efoGeHDTgytlJrABpVrTl3Ir1CqkpUi2",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Pekayon",
+		},
+		{
+			ShopName:           "Diskonter Harapan",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "mMiX1POMu82ucxoLpHmU",
+			OlseraSecretKey:    "bhKKotSdbfDqScvLsWHW2aoZkKog8rAW",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Harapan",
+		},
+		{
+			ShopName:           "Diskonter Loji",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "Aq3xc2bgkMCuXQvLg2Vf",
+			OlseraSecretKey:    "7mU2C3ilNtAAG4Ftp21WFsasBlpvtflb",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Loji",
+		},
+		{
+			ShopName:           "Diskonter Mayor Oking",
+			IsOlseraIntegreted: true,
+			OlseraAppID:        "IdGByAN35lZvdoBsoAkn",
+			OlseraSecretKey:    "DLrPRTvX9W0tyEXjulDhVf18jXa40eIe",
+			PhoneNumber:        "08",
+			Address:            "Diskonter Mayor Oking",
+		},
+	}
 
-	return db.Create(&destinations).Error
+	for _,destination := range destinations {
+		secret_key, err := helpers.Encrypt(destination.OlseraSecretKey)
+		if err != nil {
+			return err
+		}
+
+		destination.OlseraSecretKey = secret_key
+		if err := db.Create(&destination).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func seedCategories(db *gorm.DB) error {
