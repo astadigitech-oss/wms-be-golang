@@ -649,6 +649,12 @@ func MigrateDocumentFinish(c *gin.Context) {
 				"note": "Migrasi WMS: " + doc.CodeDocument,
 			})
 
+			if err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal create header stock in out olsera", err)
+				return
+			}
+			
 			jsonBytes, err := json.Marshal(resCreate.Data)
 			if err != nil {
 				tx.Rollback()
@@ -657,11 +663,6 @@ func MigrateDocumentFinish(c *gin.Context) {
 			}
 			olseraResponseLog = string(jsonBytes)
 
-			if err != nil {
-				tx.Rollback()
-				helpers.ErrorResponse(c, 500, "Gagal create header stock in out olsera", err)
-				return
-			}
 
 			dataRes, _ := resCreate.Data.(map[string]interface{})
 			dataRes2, _ := dataRes["data"].(map[string]interface{})
