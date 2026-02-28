@@ -1469,7 +1469,8 @@ func Encrypt(text string) (string, error) {
 }
 
 func Decrypt(cryptoText string) (string, error) {
-	appKey := os.Getenv("APP_KEY")
+	appKey := "4Jrf/w12Og2CqfrR+oM93y5ncxxK3uRhLaZfsm8GIiw="
+	appKey = strings.TrimSpace(appKey)
 	decodedKey, err := base64.StdEncoding.DecodeString(appKey)
 	if err != nil {
 		return "", err

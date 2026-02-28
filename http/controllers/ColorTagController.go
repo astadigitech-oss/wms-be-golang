@@ -254,6 +254,7 @@ func DeleteTagColor(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
 			"message": "Gagal menghapus data",
+			"error": err.Error(),
 		})
 		return
 	}

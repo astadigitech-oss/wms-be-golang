@@ -276,6 +276,10 @@ func RouteHandler(r *gin.Engine) {
 			rg.DELETE("migrate-color/destinations/:destination_id", controllers.DestroyMigrateDestination)  //MigrateColorController.go
 		})
 
+		roleGroup(protected, []string{"Admin", "Spv", "Team Leader", "Kasir leader", "Admin Kasir", "Reparasi", "Audit"}, func(rg *gin.RouterGroup) {
+			rg.GET("color-stock-statistics", controllers.ColorStockStatistics); //MigrateColorController.go
+		})
+
 		roleGroup(protected, []string{"Admin", "Spv", "Admin Kasir", "Kasir leader"}, func(rg *gin.RouterGroup) {
 			//sale
 			rg.GET("sale-documents", controllers.GetSaleDocuments) //SaleController.go
@@ -372,5 +376,7 @@ func RouteHandler(r *gin.Engine) {
 			rg.POST("/b2b-documents/so", controllers.SoB2BDocument) //SOController.go
 		})
 		
+		//TOOL
+		protected.POST("olsera/sync-token", controllers.SyncOlseraToken) //MigrateColorController.go
 	}
 }

@@ -1,15 +1,19 @@
 package controllers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
+	"liquid8/wms/services"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -141,20 +145,21 @@ func GetColorDestination(c *gin.Context) {
 	type colorCount struct {
 		Color string `json:"color"`
 		Total int64  `json:"total"`
+		FixedPrice float64  `json:"fixed_price"`
 	}
 
-
 	var colors []colorCount
-
 	// HITUNG BERDASARKAN JOIN COLOR TAG
 	err := config.DB.Table("products as p").
-		Select("ct.name_color as color, COUNT(*) as total").
+		Select("ct.name_color as color, COUNT(*) as total, ct.fixed_price_color as fixed_price").
 		Joins("JOIN color_tags ct ON ct.id = p.tag_color_id").
 		Where("p.tag_color_id IS NOT NULL").
 		Where("p.category_id IS NULL").
+		Where("p.is_so IS NULL").
 		Where("p.quality = ?", "lolos").
-		Where("p.status = ?", "display").
-		Group("ct.name_color").
+		Where("(p.warehouse_type IS NULL OR p.warehouse_type = ?)", "type1").
+		Where("p.status IN ?", []string{"display","expired","slow_moving"}).
+		Group("ct.name_color, ct.fixed_price_color").
 		Scan(&colors).Error
 
 	if err != nil {
@@ -173,6 +178,37 @@ func GetColorDestination(c *gin.Context) {
 			"data":    nil,
 		})
 		return
+	}
+		
+	var migrates []struct {
+		ProductColor string
+		BookedTotal int64
+	}
+	if err := config.DB.
+		Model(&models.MigrateColorItem{}).
+		Select("product_color, SUM(product_total) as booked_total").
+		Where("status = ?", "proses").
+		Group("product_color").
+		Scan(&migrates).Error; err != nil {
+
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data migrate", err)
+		return
+	}
+
+	bookedColors := make(map[string]int64)
+	for _, r := range migrates {
+		bookedColors[r.ProductColor] = r.BookedTotal
+	}
+
+	var filteredColors []colorCount
+	for _, color := range colors {
+		booked_total := bookedColors[color.Color]
+	
+		remaining := color.Total - booked_total
+		if remaining <= 0 {continue}
+
+		color.Total = remaining
+		filteredColors = append(filteredColors, color)
 	}
 
 	// Ambil destinations
@@ -193,7 +229,7 @@ func GetColorDestination(c *gin.Context) {
 		"success": true,
 		"message": "list data product by color",
 		"data": gin.H{
-			"color":        colors,
+			"color":        filteredColors,
 			"destinations": destinations,
 		},
 	})
@@ -265,7 +301,7 @@ func StoreMigrateColor(c *gin.Context) {
 		Table("products as p").
 		Joins("JOIN color_tags ct ON ct.id = p.tag_color_id").
 		Where("ct.name_color = ?", req.ProductColor).
-		Where("p.status = ?", "display").
+		Where("p.status IN ?", []string{"display", "expired", "slow_moving"}).
 		Order("p.created_at ASC").
 		Find(&products).Error
 
@@ -362,9 +398,9 @@ func StoreMigrateColor(c *gin.Context) {
 	// ==========================
 	migrate := models.MigrateColorItem{
 		CodeDocumentMigrate: migrateDocument.CodeDocument,
-		ProductColor:        fmt.Sprint(req.ProductColor), // sesuaikan tipe di struct
+		ProductColor:        req.ProductColor, // sesuaikan tipe di struct
 		ProductTotal:        req.ProductTotal,
-		Status:       "proses",
+		Status:       		 "proses",
 		UserID:              uint64(user.ID),
 	}
 
@@ -418,7 +454,6 @@ func StoreMigrateColor(c *gin.Context) {
 		"data":    migrate,
 	})
 }
-
 
 func DestroyMigrateColor(c *gin.Context) {
 	migrate_id := c.Param("migrate_id")
@@ -513,7 +548,6 @@ func DestroyMigrateColor(c *gin.Context) {
 func MigrateDocumentFinish(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
-	//start transaction
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction", "error": tx.Error.Error()})
@@ -526,152 +560,213 @@ func MigrateDocumentFinish(c *gin.Context) {
             tx.Rollback()
             c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false, 
-				"message": "Internal server error",
+				"message": "Internal server error (panic)",
 				"error": fmt.Sprintf("%v", r),
 			})
         }
     }()
 
-	// Ambil Document
-	var documents []models.MigrateColorDocument
-
+	var migrateDocs []models.MigrateColorDocument
 	err := tx.Preload("Migrates").
 		Where("user_id = ? AND status_document = ?", user.ID, "proses").
-		Find(&documents).Error
+		Find(&migrateDocs).Error
 
 	if err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{
-			"success": false,
-			"message": "Gagal mengambil migrate document",
-			"error":   err.Error(),
-		})
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data migrate document", err)
 		return
 	}
 
-	if len(documents) == 0 {
+	if len(migrateDocs) == 0 {
 		tx.Rollback()
-		c.JSON(422, gin.H{
-			"success": false,
-			"message": "Tidak ada data migrate yang sedang proses",
-		})
+		helpers.ErrorResponse(c, 404, "Tidak ada dokumen yang perlu diproses", nil)
 		return
 	}
 
-	// ================= LOOP DOCUMENT =================
-	for _, doc := range documents {
+	successCount := 0
+	log := helpers.NewLogger("./logs/app.log")
+	ctx := c.Request.Context()
+	for _, doc := range migrateDocs {
 
-		totalUpdated := 0
+		// ===== GET DESTINATION =====
+		var destination models.MigrateColorDestination
+		if err := tx.Where("shop_name = ?", doc.DestinyDocument).
+			First(&destination).Error; err != nil {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 404, "Destination tidak ditemukan", nil)
+			return
+		}
 
+		// ===== UPDATE PRODUCT STATUS =====
+		total := 0
 		for _, m := range doc.Migrates {
-
-			// Ambil Product ID
-			var productIDs []uint
-
+			total += m.ProductTotal
+			var ids []uint
 			err := tx.Table("products p").
 				Select("p.id").
-				Joins("JOIN color_tags c ON c.id = p.tag_color_id").
-				Where("c.name_color = ?", m.ProductColor).
-				Where("p.status = ?", "display").
-				Order("p.created_at ASC").
+				Joins("JOIN color_tags ct ON ct.id = p.tag_color_id").
+				Where("ct.name_color = ? AND p.status IN ?",
+					m.ProductColor,
+					[]string{"display", "expired", "slow_moving"},
+				).
 				Limit(m.ProductTotal).
-				Pluck("p.id", &productIDs).Error
+				Pluck("p.id", &ids).Error
 
 			if err != nil {
 				tx.Rollback()
-				c.JSON(500, gin.H{
-					"success": false,
-					"message": "Gagal mengambil data product",
-					"color":   m.ProductColor,
-					"error":   err.Error(),
-				})
+				helpers.ErrorResponse(c, 500, "Gagal mengambil id product migrate", err)
 				return
 			}
 
-			if len(productIDs) == 0 {
+			if len(ids) == 0 {
 				tx.Rollback()
-				c.JSON(422, gin.H{
-					"success": false,
-					"message": "Data product color tidak ditemukan",
-					"color":   m.ProductColor,
-				})
+				helpers.ErrorResponse(c, 400, "Tidak ada product tag color yang bisa di kirim", nil)
 				return
 			}
 
-			// Update Product
-			res := tx.Table("products").
-				Where("id IN ?", productIDs).
-				Update("status", "migrate")
-
-			if res.Error != nil {
+			err = tx.Table("products").
+				Where("id IN ?", ids).
+				Update("status", "migrate").Error
+			
+			if err != nil {
 				tx.Rollback()
-				c.JSON(500, gin.H{
-					"success": false,
-					"message": "Gagal update status product",
-					"error":   res.Error.Error(),
-				})
+				helpers.ErrorResponse(c, 500, "Gagal mengupdate product menjadi migrate", err)
 				return
 			}
-
-			if res.RowsAffected == 0 {
-				tx.Rollback()
-				c.JSON(422, gin.H{
-					"success": false,
-					"message": "Tidak ada product yang terupdate",
-					"color":   m.ProductColor,
-				})
-				return
-			}
-
-			totalUpdated += int(res.RowsAffected)
 		}
 
-		//  Update Table Migrates 
-		err = tx.Model(&models.MigrateColorItem{}).
-			Where("code_document_migrate = ?", doc.CodeDocument).
-			Update("status", "selesai").Error
+		var olseraPk uint
+		var olseraResponseLog string
 
-		if err != nil {
-			tx.Rollback()
-			c.JSON(500, gin.H{
-				"success": false,
-				"message": "Gagal update status migrate",
-				"error":   err.Error(),
+		// ===== IF OLSERA =====
+		if destination.IsOlseraIntegreted {
+			olseraService := services.NewOlseraService(&destination, log)
+
+			// CREATE HEADER / DOCUMENT
+			resCreate, err := olseraService.CreateStockInOut(ctx, map[string]interface{}{
+				"date": time.Now().Format("2006-01-02"),
+				"type": "I",
+				"note": "Migrasi WMS: " + doc.CodeDocument,
 			})
-			return
-		}
 
-		// Update Document
-		err = tx.Model(&doc).Updates(map[string]interface{}{
-				"total_product_document": totalUpdated,
+			jsonBytes, err := json.Marshal(resCreate.Data)
+			if err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Converting json failed", err)
+				return
+			}
+			olseraResponseLog = string(jsonBytes)
+
+			if err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal create header stock in out olsera", err)
+				return
+			}
+
+			dataRes, _ := resCreate.Data.(map[string]interface{})
+			dataRes2, _ := dataRes["data"].(map[string]interface{})
+
+			idFloat, ok := dataRes2["id"].(float64)
+			if !ok {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Invalid type id", nil)
+				return
+			}
+
+			olseraPk = uint(idFloat)
+			if olseraPk == 0 {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal mendapatkan ID Transaksi (PK) dari Olsera", nil)
+				return
+			}
+
+			// ===== GROUP BY COLOR =====
+			grouped := map[string]int{}
+			for _, m := range doc.Migrates {
+				grouped[strings.ToLower(m.ProductColor)] += m.ProductTotal
+			}
+
+			// ===== GET MAPPING By Destination =====
+			mappingMap, err := config.GetTagMapping(destination.ShopName)
+			if err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal maping tag color", err)
+				return
+			}
+
+			cart := make(map[string]int)
+			for tag, qty := range grouped {
+				olseraID, ok := mappingMap[tag]
+				if !ok {
+					helpers.ErrorResponse(c, 500, fmt.Sprintf("Mapping tidak ditemukan untuk tag %s",tag), nil)
+					return
+				}
+
+				cart[olseraID] += qty
+			}
+
+			// ===== ADD ITEMS =====
+			for olseraID, qty := range cart {
+				_, err := olseraService.AddItemStockInOut(ctx, map[string]interface{}{
+					"pk":          olseraPk,
+					"product_ids": olseraID,
+					"qty":         qty,
+					"type":        "I",
+				})
+
+				if err != nil {
+					tx.Rollback()
+					helpers.ErrorResponse(c, 500, fmt.Sprintf("Gagal menambah group item (ID Olsera: %s)", olseraID), err)
+					return
+				}
+			}
+
+			// ===== PUBLISH =====
+			_, err = olseraService.UpdateStatusStockInOut(ctx, map[string]interface{}{
+				"pk":     olseraPk,
+				"status": "P",
+			})
+
+			if err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal mem-posting (Publish) dokumen Stock In", err)
+				return
+			}
+
+			// ===== UPDATE MIGRATE =====
+			if err := tx.Model(&models.MigrateColorItem{}).
+				Where("code_document_migrate = ?", doc.CodeDocument).
+				Update("status", "selesai").Error; err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal update status migrate item", err)
+				return
+			}
+	
+			// ===== UPDATE DOCUMENT =====
+			if err := tx.Model(&doc).Updates(map[string]interface{}{
+				"total_product_document": total,
 				"status_document":        "selesai",
-			}).Error
-
-		if err != nil {
-			tx.Rollback()
-			c.JSON(500, gin.H{
-				"success": false,
-				"message": "Gagal update migrate document",
-				"error":   err.Error(),
-			})
-			return
+				"olsera_purchase_id":     olseraPk,
+				"olsera_response_log":     olseraResponseLog,
+			}).Error; err != nil {
+				tx.Rollback()
+				helpers.ErrorResponse(c, 500, "Gagal update migrate document", err)
+				return
+			}
 		}
+
+
+		successCount++
 	}
 
-	// ================= COMMIT =================
 	if err := tx.Commit().Error; err != nil {
-		c.JSON(500, gin.H{
-			"success": false,
-			"message": "Gagal commit transaksi",
-			"error":   err.Error(),
-		})
+		helpers.ErrorResponse(c, 500, "Failed commit", err)
 		return
 	}
 
-	// ================= SUCCESS =================
 	c.JSON(200, gin.H{
 		"success": true,
-		"message": "Migrate document berhasil difinish",
+		"message": fmt.Sprintf("Berhasil memproses %d dokumen migrasi", successCount),
 	})
 }
 
@@ -965,4 +1060,238 @@ func DestroyMigrateDestination(c *gin.Context) {
 		"message": "Destination berhasil dihapus",
 	})
 
+}
+
+func ColorStockStatistics(c *gin.Context) {
+	type colorStatistic struct {
+		Color	string	`json:"color"`
+		Qty 	int64 	`json:"qty"`
+		TotalValue float64	`json:"total_value"`
+	}
+
+	var (
+		grandTotalStickerQty int64
+		grandTotalStickerValue float64
+		grandTotalOlseraQty int64
+		grandTotalOlseraValue float64
+	)
+
+	var mainProduct []colorStatistic
+	if err := config.DB.Table("products p").
+		Select(`
+			LOWER(ct.name_color) as color,
+			COUNT(*) as qty,
+			COALESCE(SUM(p.price), 0) as total_value
+		`).
+		Joins("JOIN color_tags ct ON ct.id = p.tag_color_id").
+		Where("p.category_id IS NULL").
+		Where("p.is_so IS NULL").
+		Where("p.tag_color_id IS NOT NULL").
+		Where("p.status IN ?", []string{"display", "expired", "slow_moving"}).
+		Where("p.quality = ?", "lolos").
+		Where("p.warehouse_type IS NULL OR p.warehouse_type IN ?", []string{"type1", "type2"}).
+		Group("color").
+		Scan(&mainProduct).Error; err != nil {
+		
+		helpers.ErrorResponse(c, 500, "Gagal query data color product", err)
+		return
+	}
+
+	productSticker := make(map[string]map[string]float64)
+	for _, item := range mainProduct {
+		color := strings.ToLower(item.Color) // biar konsisten
+
+		productSticker[color] = map[string]float64{
+			"qty":         float64(item.Qty),
+			"total_value": item.TotalValue,
+		}
+		grandTotalStickerQty += item.Qty
+		grandTotalStickerValue += item.TotalValue
+	}
+
+	//Olsera stock
+	log := helpers.NewLogger("./logs/app.log")
+	var destinations []models.MigrateColorDestination
+	if err := config.DB.Where("is_olsera_integreted", true).Find(&destinations).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data destinations", err)
+		return
+	}
+
+	productOlsera := map[string]map[string]float64{
+		"24K": {
+			"qty":         0,
+			"total_value": 0,
+		},
+		"12K": {
+			"qty":         0,
+			"total_value": 0,
+		},
+		"lainnya": {
+			"qty":         0,
+			"total_value": 0,
+		},
+	}
+
+	type olseraResult struct {
+		K24Qty   float64
+		K24Value float64
+
+		K12Qty   float64
+		K12Value float64
+
+		LainQty   float64
+		LainValue float64
+
+		GrandQty   int64
+		GrandValue float64
+	}
+
+	sem := make(chan struct{}, 1)
+	var wg sync.WaitGroup
+	ctx := c.Request.Context()
+	resultChan := make(chan olseraResult, len(destinations))
+
+	for _, dest := range destinations {
+
+		destination := dest // COPY (anti bug range)
+
+		sem <- struct{}{}
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			olseraService := services.NewOlseraService(&destination, log)
+
+			resultAPI, err := olseraService.GetProductList(ctx, nil)
+			if err != nil {
+				log.WithError(err).
+					Error(fmt.Sprintf("Gagal mengambil product list dari %s", destination.ShopName))
+				return
+			}
+
+			data, _ := resultAPI.Data.(map[string]interface{})
+			itemList, _ := data["data"].([]interface{})
+
+			local := olseraResult{}
+
+			for _, rawItem := range itemList {
+				item, ok := rawItem.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				name, _ := item["name"].(string)
+				qtyStr, _ := item["stock_qty"].(string)
+				priceStr, _ := item["sell_price"].(string)
+
+				qtyFloat, _ := strconv.ParseFloat(qtyStr, 64)
+				price, _ := strconv.ParseFloat(priceStr, 64)
+
+				totalValue := qtyFloat * price
+
+				switch {
+				case strings.Contains(name, "dummy_product_big"):
+					local.K24Qty += qtyFloat
+					local.K24Value += totalValue
+
+				case strings.Contains(name, "dummy_product_small"):
+					local.K12Qty += qtyFloat
+					local.K12Value += totalValue
+
+				default:
+					local.LainQty += qtyFloat
+					local.LainValue += totalValue
+				}
+
+				local.GrandQty += int64(qtyFloat)
+				local.GrandValue += totalValue
+			}
+
+			resultChan <- local
+		}()
+	}
+
+	// Tunggu semua selesai
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Agregasi final (single thread → NO RACE)
+	final := olseraResult{}
+	for r := range resultChan {
+		final.K24Qty += r.K24Qty
+		final.K24Value += r.K24Value
+
+		final.K12Qty += r.K12Qty
+		final.K12Value += r.K12Value
+
+		final.LainQty += r.LainQty
+		final.LainValue += r.LainValue
+
+		final.GrandQty += r.GrandQty
+		final.GrandValue += r.GrandValue
+	}
+
+	productOlsera["24K"]["qty"] = final.K24Qty
+	productOlsera["24K"]["total_value"] = final.K24Value
+	productOlsera["12K"]["qty"] = final.K12Qty
+	productOlsera["12K"]["total_value"] = final.K12Value
+	productOlsera["lainnya"]["qty"] = final.LainQty
+	productOlsera["lainnya"]["total_value"] = final.LainValue
+
+	c.JSON(200, gin.H{
+		"success": false,
+		"message": "Data statistik Stok dan Valuasi Product Color",
+		"resource": gin.H{
+			"product_sticker": gin.H{
+				"grand_total_qty": grandTotalStickerQty,
+				"grand_total_value": grandTotalStickerValue,
+				"detail_per_colors": productSticker,
+			},
+			"olsera_stock": gin.H{
+				"grand_total_qty": grandTotalOlseraQty,
+				"grand_total_value": grandTotalOlseraValue,
+				"detail_per_colors": productOlsera,
+			},
+		},
+	})
+}
+
+func SyncOlseraToken(c *gin.Context) {
+	var destinations []models.MigrateColorDestination
+	if err := config.DB.Where("is_olsera_integreted", true).Find(&destinations).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data destinations", err)
+		return
+	}
+
+	ctx := c.Request.Context()
+	log := helpers.NewLogger("./logs/app.log")
+	responseResult := []gin.H{}
+	for _, destination := range destinations {
+		dest := destination
+		olseraService := services.NewOlseraService(&dest, log)
+		err := olseraService.SyncOlseraToken(ctx)
+		if err != nil {
+			responseResult = append(responseResult, gin.H{
+				"toko": destination.ShopName,
+				"statug": "Gagal",
+				"message": err.Error(),
+			})
+		}else {
+			responseResult = append(responseResult, gin.H{
+				"toko": destination.ShopName,
+				"statug": "Sukses",
+				"message": "Token berhasil diperbarui",
+			})
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"success": false,
+		"message": "Proses singkronisasi selesai",
+		"resource": responseResult,
+	})
 }
