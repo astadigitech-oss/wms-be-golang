@@ -654,7 +654,7 @@ func MigrateDocumentFinish(c *gin.Context) {
 				helpers.ErrorResponse(c, 500, "Gagal create header stock in out olsera", err)
 				return
 			}
-			
+
 			jsonBytes, err := json.Marshal(resCreate.Data)
 			if err != nil {
 				tx.Rollback()
@@ -1156,11 +1156,13 @@ func ColorStockStatistics(c *gin.Context) {
 
 		destination := dest // COPY (anti bug range)
 
-		sem <- struct{}{}
 		wg.Add(1)
-
+		
 		go func() {
 			defer wg.Done()
+
+			//Worker Pool (Limit concurrency)
+			sem <- struct{}{}
 			defer func() { <-sem }()
 
 			olseraService := services.NewOlseraService(&destination, log)
@@ -1193,11 +1195,11 @@ func ColorStockStatistics(c *gin.Context) {
 				totalValue := qtyFloat * price
 
 				switch {
-				case strings.Contains(name, "dummy_product_big"):
+				case strings.Contains(name, "24"):
 					local.K24Qty += qtyFloat
 					local.K24Value += totalValue
 
-				case strings.Contains(name, "dummy_product_small"):
+				case strings.Contains(name, "12"):
 					local.K12Qty += qtyFloat
 					local.K12Value += totalValue
 

@@ -192,9 +192,12 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
 			//Slow Moving Product - BKL
 			rg.GET("/bkl-documents", controllers.ListBKLDocuments) //DocumentController.go
+			rg.GET("/bkl/olsera/stockoutgoing", controllers.ListOlseraOutgoing) //DocumentController.go
+			rg.GET("/bkl/olsera/stockinout/:id", controllers.DetailOlseraOutgoing) //DocumentController.go
 			rg.GET("/bkl-document/generate-code", controllers.GenerateBKLCode) //DocumentController.go
 			rg.GET("/bkl-document/:id/detail", controllers.DetailBKL) //DocumentController.go
-			rg.POST("/bkl-document", controllers.CreateBKL) //DocumentController.go
+			rg.POST("/bkl/olsera/process", controllers.ProcessOlseraOutgoing) //DocumentController.go
+			// rg.POST("/bkl-document", controllers.CreateBKL) //DocumentController.go
 			rg.POST("/bkl-document/:id/to-edit", controllers.ToEditBKL) //DocumentController.go
 			rg.PUT("/bkl-document/:id", controllers.UpdateBKL) //DocumentController.go
 		})

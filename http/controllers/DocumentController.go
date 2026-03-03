@@ -1,14 +1,16 @@
 package controllers
 
 import (
+	"context"
 	"errors"
-	"liquid8/wms/services"
 	"liquid8/wms/config"
 	"liquid8/wms/helpers"
 	"liquid8/wms/models"
+	"liquid8/wms/services"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"database/sql"
@@ -705,7 +707,6 @@ func ListBKLDocuments(c *gin.Context) {
 		},
 	})
 }
-
 func GenerateBKLCode(c *gin.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -749,7 +750,6 @@ func GenerateBKLCode(c *gin.Context) {
 		},
 	})
 }
-
 func DetailBKL(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
     if err != nil {
@@ -779,12 +779,12 @@ func DetailBKL(c *gin.Context) {
 		"resource": bklDocument,
 	})
 }
-
-func CreateBKL(c *gin.Context) {
+func ProcessOlseraOutgoing(c *gin.Context) {
 	type payloadRequest struct {
-		NameDocument string `json:"name_document" binding:"required"`
-		Type         string `json:"type" binding:"required,oneof=in out"`
-		DamageQty    *int   `json:"damage_qty" binding:"omitempty,min=1"`
+		DestinationID uint64 `json:"destination_id" binding:"required"`
+		OlseraDocumentID string `json:"olsera_document_id" binding:"required"`
+		OlseraDocumentCode string `json:"olsera_document_code" binding:"required"`
+		DamageQty    *int   `json:"damage_qty" binding:"omitempty,min=0"`
 		Colors       []struct {
 			ColorTagID uint64 `json:"color_tag_id" binding:"required"`
 			Qty        int    `json:"qty" binding:"required,min=1"`
@@ -804,7 +804,6 @@ func CreateBKL(c *gin.Context) {
 		}
 
 		errorsMap := make(map[string]string)
-
 		for _, e := range ve {
 			field := e.Field()
 			structField := e.StructField()
@@ -834,10 +833,12 @@ func CreateBKL(c *gin.Context) {
 
 			// ===== FIELD LAIN =====
 			switch field {
-			case "NameDocument":
-				errorsMap["name_document"] = "Nama dokumen wajib diisi"
-			case "Type":
-				errorsMap["type"] = "Type harus bernilai in atau out"
+			case "DestinationID":
+				errorsMap["destination_id"] = "Destination ID wajib diisi"
+			case "OlseraDocumentID":
+				errorsMap["olsera_document_id"] = "Olsera document ID wajib diisi"
+			case "OlseraDocumentCode":
+				errorsMap["olsera_document_code"] = "Code document olsera wajib diisi"
 			case "DamageQty":
 				errorsMap["damage_qty"] = "Damage qty minimal 1"
 			default:
@@ -847,10 +848,54 @@ func CreateBKL(c *gin.Context) {
 		}
 
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status": false,
+			"success": false,
 			"message": "Validasi gagal",
 			"errors": errorsMap,
 		})
+		return
+	}
+
+	// TRANSACTION
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(500, gin.H{"success": false, "message": "Gagal memulai transaksi"})
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Terjadi kesalahan internal",
+				"error": fmt.Sprintf("%v", r),
+			})
+		}
+	}()
+
+	var destination models.MigrateColorDestination
+	if err := tx.First(&destination, payload.DestinationID).Error; err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 404, "Toko tidak ditemukan, pastikan Destination ID sudah benar", err)
+		return
+	}
+
+	log := helpers.NewLogger("./logs/app.log")
+	olseraService := services.NewOlseraService(&destination, log)
+
+	resp, err := olseraService.GetDetailOutgoingStock(c.Request.Context(), map[string]string{"id": payload.OlseraDocumentID})
+	if err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 400, "Gagal menarik detail olsera", err)
+		return
+	}
+
+	dataRes,_ := resp.Data.(map[string]interface{})
+	dataRes2,_ := dataRes["data"].(map[string]interface{})
+	status,_ := dataRes2["status"].(string)
+	status_desc,_ := dataRes2["status_desc"].(string)
+	if status != "D" {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, fmt.Sprintf("Validasi Gagal: status olsera %s (%s)", status_desc, status), nil)
 		return
 	}
 
@@ -859,105 +904,479 @@ func CreateBKL(c *gin.Context) {
 		colorTagIDs = append(colorTagIDs, c.ColorTagID)
 	}
 
-	var existingIDs []uint64
-	err := config.DB.
-		Model(&models.ColorTag{}).
-		Where("id IN ?", colorTagIDs).
-		Pluck("id", &existingIDs).Error
+	// ===============================
+	// Hitung Qty Olsera
+	// ===============================
+	olseraQty := map[string]int{"24": 0, "12": 0}
+	productName := map[string]string{}
 
-	if err != nil {
-		c.JSON(500, gin.H{"status": false, "message": "Gagal validasi color tag"})
-		return
+	items,_ := dataRes2["items"].([]interface{})
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			continue			
+		}
+
+		oName,_ := item["product_name"].(string) 
+		qty,_ := item["qty"].(float64) 
+
+		// name := strings.ToUpper(oName)
+		if strings.Contains(oName, "24") {
+			olseraQty["24"] += int(qty)
+			productName["24"] = oName
+		}
+		if strings.Contains(oName, "12") {
+			olseraQty["12"] += int(qty)
+			productName["12"] = oName
+		}
+	}
+	// ===============================
+	// Ambil Semua ColorTags Sekali Query
+	// ===============================
+	var colorTags []models.ColorTag
+	colorIDs := make([]uint64, 0)
+	for _, c := range payload.Colors {
+		colorIDs = append(colorIDs, c.ColorTagID)
 	}
 
-	if len(existingIDs) != len(colorTagIDs) {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"status": false,
-			"message": "Salah satu color tag tidak ditemukan",
-		})
-		return
-	}
-
-	// AMBIL USER 
-	user := c.MustGet("auth_user").(models.User)
-
-	// TRANSACTION
-	tx := config.DB.WithContext(c.Request.Context()).Begin()
-	if tx.Error != nil {
-		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
-		return
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
+	if len(colorIDs) > 0 {
+		if err := tx.Where("id IN ?", colorIDs).Find(&colorTags).Error; err != nil {
 			tx.Rollback()
-			c.JSON(500, gin.H{
-				"status": false,
-				"message": "Terjadi kesalahan internal",
-				"error": fmt.Sprintf("%v", r),
+			helpers.ErrorResponse(c, 500, "Gagal mengambil color tag", err)
+			return
+		}
+	}
+
+	colorMap := make(map[uint64]string)
+	for _, ct := range colorTags {
+		colorMap[ct.ID] = strings.ToLower(ct.NameColor)
+	}
+
+	valid24 := map[string]bool{"merah": true, "biru": true, "big": true}
+	valid12 := map[string]bool{"kuning": true, "hijau": true, "small": true}
+
+	inputQty := map[string]int{"24": 0, "12": 0}
+	mapped := map[string][]struct{
+		ColorID uint64
+		Tag string
+		Qty int
+	}{"24": {}, "12": {}}
+
+	for _, col := range payload.Colors {
+		name := colorMap[col.ColorTagID]
+		name, exists := colorMap[col.ColorTagID]
+		if !exists {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 422, fmt.Sprintf("Color tag tidak ditemukan | Color ID : %d", col.ColorTagID), nil)
+			return
+		}
+
+		if valid24[name] {
+			inputQty["24"] += col.Qty
+			mapped["24"] = append(mapped["24"], struct{
+				ColorID uint64
+				Tag string
+				Qty int
+			}{col.ColorTagID, name, col.Qty})
+		}
+		if valid12[name] {
+			inputQty["12"] += col.Qty
+			mapped["12"] = append(mapped["12"], struct{
+				ColorID uint64
+				Tag string
+				Qty int
+			}{col.ColorTagID, name, col.Qty})
+		}
+	}
+
+	unaccounted24 := olseraQty["24"] - inputQty["24"]
+	unaccounted12 := olseraQty["12"] - inputQty["12"]
+
+	if unaccounted24 < 0 || unaccounted12 < 0 {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 422, "QC yang diinputkan melebihi stok olsera", err)
+		return
+	}
+
+	totalUnaccounted := unaccounted24 + unaccounted12
+	damagedQTY := 0
+	if payload.DamageQty != nil {
+		damagedQTY = *payload.DamageQty
+	}
+	if damagedQTY > totalUnaccounted {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 422, fmt.Sprintf("Damage QTY melebihi sisa barang yang belum di QC (%d)", totalUnaccounted), nil)
+		return
+	}
+
+	totalLost := totalUnaccounted - damagedQTY
+	allocatedDamage := map[string]int{"24": 0, "12":0}
+	remainingDamage := damagedQTY
+	for _,cat := range []string{"24", "12"} {
+		take := unaccounted24
+		if cat == "12" {
+			take = unaccounted12
+		}
+
+		if remainingDamage < take {
+			take = remainingDamage
+		}
+		allocatedDamage[cat] = take
+		remainingDamage -= take
+	}
+	// ===============================
+	// Create Document
+	// ===============================
+	user := c.MustGet("auth_user").(models.User)
+	document := models.BklDocument{
+		CodeBkl: payload.OlseraDocumentCode,
+		Status: "done",
+		UserID: uint64(user.ID),
+	}
+
+	if err := tx.
+		Where(models.BklDocument{CodeBkl: payload.OlseraDocumentCode}).
+		FirstOrCreate(&document, models.BklDocument{
+			CodeBkl: payload.OlseraDocumentCode,
+			Status:  "done",
+			UserID:  uint64(user.ID),
+		}).Error; err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal membuat document", err)
+		return
+	}
+	// ===============================
+	// Create History BKL Item
+	// ===============================
+	//catat history color
+	if len(payload.Colors) > 0 {
+		for _,col := range payload.Colors {
+			bkl_item := models.BklItem{
+				BklDocumentID: document.ID,
+				Type: "in",
+				Qty: col.Qty,
+				TagColorID: &col.ColorTagID,
+				IsDamaged: false,
+				IsLost: false,
+			}
+
+			if err := tx.Create(&bkl_item).Error; err != nil {
+				tx.Rollback()		
+				helpers.ErrorResponse(c, 500, "Gagal membuat history bkl item color", err)		
+				return
+			}
+		}
+	}
+	//catat history damaged
+	if damagedQTY > 0 {
+		bkl_item := models.BklItem{
+			BklDocumentID: document.ID,
+			Type: "in",
+			Qty: damagedQTY,
+			IsDamaged: true,
+			IsLost: false,
+		}
+
+		if err := tx.Create(&bkl_item).Error; err != nil {
+			tx.Rollback()		
+			helpers.ErrorResponse(c, 500, "Gagal membuat history bkl item type damage", err)		
+			return
+		}
+	}
+	//catat history lost
+	if totalLost > 0 {
+		bkl_item := models.BklItem{
+			BklDocumentID: document.ID,
+			Type: "in",
+			Qty: totalLost,
+			IsDamaged: false,
+			IsLost: true,
+		}
+
+		if err := tx.Create(&bkl_item).Error; err != nil {
+			tx.Rollback()		
+			helpers.ErrorResponse(c, 500, "Gagal membuat history bkl item type lost", err)		
+			return
+		}
+	}
+	// ===============================
+	// Batch Insert BklProduct
+	// ===============================
+	var products []models.BklProduct
+	// dateIn := helpers.GetCurentTime()
+	for cat, list := range mapped {
+		if olseraQty[cat] == 0 {
+			continue
+		}
+
+		price := float64(12000)
+		if cat == "24" {
+			price = float64(24000)
+		}
+
+		for _, entry := range list {
+			for i := 0; i < entry.Qty; i++ {
+				generateBarcode := "BKL-" + helpers.RandomString(10)
+				products = append(products, models.BklProduct{
+					CodeDocument: payload.OlseraDocumentCode,
+					OldBarcodeProduct: &generateBarcode,
+					OldQuantityProduct: 1,
+					OldNameProduct: productName[cat],
+					OldPriceProduct: price,
+					Barcode: generateBarcode,
+					Name: productName[cat],
+					Quantity: 1,
+					Status: "display",
+					TagColorID: &entry.ColorID,
+					Price: price,
+					DisplayPrice: price,
+					Quality: "lolos",
+					ActualQuality: "lolos",
+					ActualOldPrice: price,
+				})
+			}
+		}
+
+		qualty_text := "damaged"
+		for i := 0; i < allocatedDamage[cat]; i++ {
+			generateBarcode := "BKL-" + helpers.RandomString(10)
+			products = append(products, models.BklProduct{
+				CodeDocument: payload.OlseraDocumentCode,
+				OldBarcodeProduct: &generateBarcode,
+				OldQuantityProduct: 1,
+				OldNameProduct: productName[cat],
+				OldPriceProduct: price,
+				Barcode: generateBarcode,
+				Name: productName[cat],
+				Quantity: 1,
+				Status: "display",
+				Price: price,
+				DisplayPrice: price,
+				Quality: "damaged",
+				QualityText: &qualty_text,
+				ActualQuality: "damaged",
+				ActualOldPrice: price,
 			})
 		}
-	}()
-
-	// INSERT BKL DOCUMENT
-	document := models.BklDocument{
-		CodeBkl: payload.NameDocument,
-		Status:  "done",
-		UserID:  uint64(user.ID),
 	}
 
-	if err := tx.Create(&document).Error; err != nil {
+	if len(products) > 0 {
+		if err := tx.CreateInBatches(products, 500).Error; err != nil {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 500, "Gagal membuat Bkl Product", err)
+			return
+		}
+	}
+	// ===============================
+	// Create User Log Action
+	// ===============================
+	meta := map[string]interface{}{}
+	if err := helpers.LogUserAction(user.ID, user.Name, fmt.Sprintf("Memproses QC olsera outgoing dengan code document %s", payload.OlseraDocumentCode), "bkl/create/list-return-olsera", meta); err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{
-			"status": false,
-			"message": "Gagal menyimpan dokumen",
-			"error": err.Error(),
-		})
+		helpers.ErrorResponse(c, 500, "Gagal mencatat log user action", err)
 		return
 	}
-
-	// SIMPAN ITEMS
-	if payload.DamageQty != nil {
-		item := models.BklItem{
-			BklDocumentID: document.ID,
-			Qty:           *payload.DamageQty,
-			Type:          payload.Type,
-			IsDamaged:     true,
-		}
-		if err := tx.Create(&item).Error; err != nil {
-			tx.Rollback()
-			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item", "error": err.Error()})
-			return
-		}
-	}
-
-	for _, item := range payload.Colors {
-		item := models.BklItem{
-			BklDocumentID: document.ID,
-			TagColorID:    &item.ColorTagID,
-			Qty:           item.Qty,
-			Type:          payload.Type,
-			IsDamaged:     false,
-		}
-		if err := tx.Create(&item).Error; err != nil {
-			tx.Rollback()
-			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item"})
-			return
-		}
+	// ===============================
+	// Update Status Olsera
+	// ===============================
+	if _, err := olseraService.UpdateStatusStockInOut(c.Request.Context(), map[string]string{
+		"pk": payload.OlseraDocumentID,
+		"status": "P",
+	}); err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, 500, "Gagal publish olsera", err)
+		return
 	}
 
 	// Commit
 	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
 		c.JSON(500, gin.H{"success": false, "message": "Commit failed"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(200, gin.H{
 		"status": true,
-		"message": "BKL Berhasil Dibuat",
+		"message": "QC Selesai & Batch Insert berhasil",
 	})
 }
+// func CreateBKL(c *gin.Context) {
+// 	type payloadRequest struct {
+// 		NameDocument string `json:"name_document" binding:"required"`
+// 		Type         string `json:"type" binding:"required,oneof=in out"`
+// 		DamageQty    *int   `json:"damage_qty" binding:"omitempty,min=1"`
+// 		Colors       []struct {
+// 			ColorTagID uint64 `json:"color_tag_id" binding:"required"`
+// 			Qty        int    `json:"qty" binding:"required,min=1"`
+// 		} `json:"colors" binding:"min=1,dive"`
+// 	}
 
+// 	var payload payloadRequest
+// 	if err := c.ShouldBindJSON(&payload); err != nil {
+
+// 		ve, ok := err.(validator.ValidationErrors)
+// 		if !ok {
+// 			c.JSON(http.StatusBadRequest, gin.H{
+// 				"status": false,
+// 				"message": "Format JSON tidak valid",
+// 			})
+// 			return
+// 		}
+
+// 		errorsMap := make(map[string]string)
+
+// 		for _, e := range ve {
+// 			field := e.Field()
+// 			structField := e.StructField()
+// 			namespace := e.Namespace()
+
+// 			// ===== VALIDASI COLORS ARRAY =====
+// 			if field == "Colors" {
+// 				if e.Tag() == "min" {
+// 					errorsMap["colors"] = "Daftar warna tidak boleh kosong"
+// 				}
+// 				continue
+// 			}
+
+// 			// ===== VALIDASI ITEM DALAM COLORS =====
+// 			if strings.Contains(namespace, ".Colors[") {
+// 				switch structField {
+// 				case "ColorTagID":
+// 					errorsMap["color_tag_id"] = "Color tag wajib diisi"
+// 				case "Qty":
+// 					errorsMap["qty"] = "Quantity minimal 1"
+// 				default:
+// 					errorsMap[strings.ToLower(structField)] =
+// 						"Validasi gagal pada field " + structField
+// 				}
+// 				continue
+// 			}
+
+// 			// ===== FIELD LAIN =====
+// 			switch field {
+// 			case "NameDocument":
+// 				errorsMap["name_document"] = "Nama dokumen wajib diisi"
+// 			case "Type":
+// 				errorsMap["type"] = "Type harus bernilai in atau out"
+// 			case "DamageQty":
+// 				errorsMap["damage_qty"] = "Damage qty minimal 1"
+// 			default:
+// 				errorsMap[strings.ToLower(field)] =
+// 					"Validasi gagal pada field " + field
+// 			}
+// 		}
+
+// 		c.JSON(http.StatusBadRequest, gin.H{
+// 			"status": false,
+// 			"message": "Validasi gagal",
+// 			"errors": errorsMap,
+// 		})
+// 		return
+// 	}
+
+// 	var colorTagIDs []uint64
+// 	for _, c := range payload.Colors {
+// 		colorTagIDs = append(colorTagIDs, c.ColorTagID)
+// 	}
+
+// 	var existingIDs []uint64
+// 	err := config.DB.
+// 		Model(&models.ColorTag{}).
+// 		Where("id IN ?", colorTagIDs).
+// 		Pluck("id", &existingIDs).Error
+
+// 	if err != nil {
+// 		c.JSON(500, gin.H{"status": false, "message": "Gagal validasi color tag"})
+// 		return
+// 	}
+
+// 	if len(existingIDs) != len(colorTagIDs) {
+// 		c.JSON(http.StatusUnprocessableEntity, gin.H{
+// 			"status": false,
+// 			"message": "Salah satu color tag tidak ditemukan",
+// 		})
+// 		return
+// 	}
+
+// 	// AMBIL USER 
+// 	user := c.MustGet("auth_user").(models.User)
+
+// 	// TRANSACTION
+// 	tx := config.DB.WithContext(c.Request.Context()).Begin()
+// 	if tx.Error != nil {
+// 		c.JSON(500, gin.H{"status": false, "message": "Gagal memulai transaksi"})
+// 		return
+// 	}
+
+// 	defer func() {
+// 		if r := recover(); r != nil {
+// 			tx.Rollback()
+// 			c.JSON(500, gin.H{
+// 				"status": false,
+// 				"message": "Terjadi kesalahan internal",
+// 				"error": fmt.Sprintf("%v", r),
+// 			})
+// 		}
+// 	}()
+
+// 	// INSERT BKL DOCUMENT
+// 	document := models.BklDocument{
+// 		CodeBkl: payload.NameDocument,
+// 		Status:  "done",
+// 		UserID:  uint64(user.ID),
+// 	}
+
+// 	if err := tx.Create(&document).Error; err != nil {
+// 		tx.Rollback()
+// 		c.JSON(500, gin.H{
+// 			"status": false,
+// 			"message": "Gagal menyimpan dokumen",
+// 			"error": err.Error(),
+// 		})
+// 		return
+// 	}
+
+// 	// SIMPAN ITEMS
+// 	if payload.DamageQty != nil {
+// 		item := models.BklItem{
+// 			BklDocumentID: document.ID,
+// 			Qty:           *payload.DamageQty,
+// 			Type:          payload.Type,
+// 			IsDamaged:     true,
+// 		}
+// 		if err := tx.Create(&item).Error; err != nil {
+// 			tx.Rollback()
+// 			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item", "error": err.Error()})
+// 			return
+// 		}
+// 	}
+
+// 	for _, item := range payload.Colors {
+// 		item := models.BklItem{
+// 			BklDocumentID: document.ID,
+// 			TagColorID:    &item.ColorTagID,
+// 			Qty:           item.Qty,
+// 			Type:          payload.Type,
+// 			IsDamaged:     false,
+// 		}
+// 		if err := tx.Create(&item).Error; err != nil {
+// 			tx.Rollback()
+// 			c.JSON(500, gin.H{"status": false, "message": "Gagal menyimpan item"})
+// 			return
+// 		}
+// 	}
+
+	// // Commit
+	// if err := tx.Commit().Error; err != nil {
+	// 	c.JSON(500, gin.H{"success": false, "message": "Commit failed"})
+	// 	return
+	// }
+
+// 	c.JSON(http.StatusOK, gin.H{
+// 		"status": true,
+// 		"message": "BKL Berhasil Dibuat",
+// 	})
+// }
 func ToEditBKL(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
     if err != nil {
@@ -987,7 +1406,6 @@ func ToEditBKL(c *gin.Context) {
 		"resource": bklDocument,
 	})
 }
-
 func UpdateBKL(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
     if err != nil {
@@ -1161,6 +1579,228 @@ func UpdateBKL(c *gin.Context) {
 		"success": true, 
 		"message": "BKL Berhasil Diupdate",
 		"resource": bklDocument,
+	})
+}
+func ListOlseraOutgoing(c *gin.Context) {
+	type outgoingItem struct {
+		ID            uint    `json:"id"`
+		TransNo       string    `json:"trans_no"`
+		Note            string    `json:"note"`
+		Status        string    `json:"status"`
+		Date          string `json:"date"`
+		DestinationID uint      `json:"destination_id"`
+		ShopName      string    `json:"shop_name"`
+	}
+
+	type paginatedResponse struct {
+		Page       int            `json:"current_page"`
+		Data       []outgoingItem `json:"data"`
+		From      int            `json:"from"`
+		To      int            `json:"to"`
+		Total      int            `json:"total"`
+		PerPage    int            `json:"per_page"`
+		Link	   []gin.H			`json:"links"`
+		LastPage int            `json:"last_page"`
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	searchQuery := strings.ToLower(c.Query("q"))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	perPage := 10
+
+	var destinations []models.MigrateColorDestination
+	if err := config.DB.Where("is_olsera_integreted = ?", true).Find(&destinations).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data destination", err)
+		return
+	}
+
+	sem := make(chan struct{}, 1)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var allDrafts []outgoingItem
+	log := helpers.NewLogger("./logs/app.log")
+	for _, dest := range destinations {
+		wg.Add(1)
+		
+		go func(destination models.MigrateColorDestination) {
+			defer wg.Done()
+
+			//Worker Pool (Limit concurrency)
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			olseraService := services.NewOlseraService(&destination, log)
+
+			resp, err := olseraService.GetOutgoingStockList(ctx, map[string]string{
+				"search_column[]": "status",
+				"search_text[]": "D",
+			})
+			if err != nil {
+				// helpers.ErrorResponse(c, 500, "Gagal melakukan fetching data ke olsera", err)
+				log.WithError(err).Error("Fetching failed")
+				// return
+			}
+
+			if resp.Success && resp.StatusCode == 200 {
+				dataRes, _ := resp.Data.(map[string]interface{})
+				dataRes2, _ := dataRes["data"].([]interface{})
+	
+				for _, rawItem := range dataRes2 {
+
+					item, ok := rawItem.(map[string]interface{})
+					if !ok {
+						log.Error("item gagal parse")
+						continue
+					}
+
+					// SAFE parsing
+					idFloat, _ := item["id"].(float64)
+					id := uint(idFloat)
+
+					transNo, _ := item["trans_no"].(string)
+					note, _ := item["note"].(string)
+					status, _ := item["status"].(string)
+					dateStr, _ := item["date"].(string)
+
+					if searchQuery != "" {
+						if !strings.Contains(strings.ToLower(destination.ShopName), searchQuery) &&
+							!strings.Contains(strings.ToLower(transNo), searchQuery) {
+							continue
+						}
+					}
+
+					out := outgoingItem{
+						ID:            id,
+						TransNo:       transNo,
+						Note:          note,
+						Status:        status,
+						Date:          dateStr,
+						DestinationID: uint(destination.ID),
+						ShopName:      destination.ShopName,
+					}
+
+					mu.Lock()
+					allDrafts = append(allDrafts, out)
+					mu.Unlock()
+				}
+			}
+		}(dest)
+	}
+
+	wg.Wait()
+
+	// Sorting
+	sort.Slice(allDrafts, func(i, j int) bool {
+		parsedDatei, _ := helpers.ParseFlexibleDate(allDrafts[i].Date)
+		parsedDatej, _ := helpers.ParseFlexibleDate(allDrafts[j].Date)
+
+		return parsedDatei.After(parsedDatej)
+	})
+
+	// pagination
+	total := len(allDrafts)
+	start := (page - 1) * perPage
+	end := start + perPage
+
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	
+	// pagination links
+	lasPage := int(math.Ceil(float64(total) / float64(perPage)))
+	links := helpers.BuildPaginationLinks(c, page, lasPage)
+	paginated := allDrafts[start:end]
+
+	response := paginatedResponse{
+		Page:       page,
+		Data:       paginated,
+		From: start + 1,
+		To: start + total,
+		Total:      total,
+		PerPage:    perPage,
+		Link: links,
+		LastPage: lasPage,
+	}
+
+	c.JSON(200, gin.H{
+		"success":  true,
+		"message": "List Antrean Retur Olsera",
+		"resource": response,
+	})
+}
+func DetailOlseraOutgoing(c *gin.Context) {
+	type summaryExpectedQty struct {
+		TotalQty24K int `json:"total_qty_24K"`
+		TotalQty12K int `json:"total_qty_12K"`
+		TotalQty    int `json:"total_qty"`
+	}
+
+	id := c.Param("id")
+
+	destinationID := c.Query("destination_id")
+	if destinationID == "" {
+		helpers.ErrorResponse(c, 400, "destination ID wajib ada", nil)
+		return
+	}
+
+	var destination models.MigrateColorDestination
+	if err := config.DB.First(&destination, destinationID).Error; err != nil {
+		helpers.ErrorResponse(c, 404, "Toko tidak ditemukan atau sudah terhapus", nil)
+		return
+	}
+
+	log := helpers.NewLogger("./logs/app.log")
+	olseraService := services.NewOlseraService(&destination, log)
+
+	resp, err := olseraService.GetDetailOutgoingStock(c.Request.Context(), map[string]string{"id": id})
+	if err != nil {
+		helpers.ErrorResponse(c, 400, "Gagal menarik detail olsera", err)
+		return
+	}
+
+	dataRes,_ := resp.Data.(map[string]interface{})
+	dataRes2,_ := dataRes["data"].(map[string]interface{})
+	itemList, _ := dataRes2["items"].([]interface{})
+
+	var total24K, total12K int
+
+	for _, rawItem := range itemList {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name,_ := item["product_name"].(string)
+		qty, _ := item["qty"].(float64)
+
+		switch {
+		case strings.Contains(name, "24"):
+			total24K += int(qty)
+		case strings.Contains(name, "12"):
+			total12K += int(qty)
+		}
+	}
+
+	summary := summaryExpectedQty{
+		TotalQty24K: total24K,
+		TotalQty12K: total12K,
+		TotalQty:    total24K + total12K,
+	}
+
+	dataRes2["destination_id"] = destination.ID
+	dataRes2["summary_expected_qty"] = summary
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"message": "Detail Return Olsera",
+		"resource":  dataRes2,
 	})
 }
 
@@ -1520,7 +2160,7 @@ func ListMigrateProducts(c *gin.Context) {
         Where("products.tag_color_id IS NULL").
         Where("products.quality = ?", "lolos").
 		Where("NOT EXISTS (SELECT 1 FROM migrate_repair_items mri WHERE mri.product_id = products.id)").
-        Where("(categories.name_category LIKE ?)", "%"+ "ELEKTRONIK" +"%")
+        Where("(categories.name_category LIKE ? OR categories.name_category ?)", "%"+ "ELEKTRONIK" +"%", "%"+ "REFURBISHED" +"%")
 
 	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {

@@ -9,6 +9,7 @@ type BklItem struct {
 	Qty            	int       `gorm:"default:0;not null" json:"qty"`
 	Type      		string    `gorm:"size:5;not null;type:enum('in', 'out')" json:"type"`
 	IsDamaged		bool      `gorm:"default:false;not null" json:"is_damaged"`
+	IsLost			bool      `gorm:"default:false;not null" json:"is_lost"`
 	CreatedAt      	time.Time `json:"created_at"`
 	UpdatedAt      	time.Time `json:"updated_at"`
 

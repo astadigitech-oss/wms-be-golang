@@ -230,7 +230,7 @@ func (s *OlseraService) sendRequest(ctx context.Context, method, endpoint string
 		// }, nil
 	}
 
-	return apiResponse{}, fmt.Errorf("%s", string(body))
+	return apiResponse{Success: false, StatusCode: resp.StatusCode}, fmt.Errorf("%s", string(body))
 }
 
 func (s *OlseraService) CreateStockInOut(ctx context.Context, data interface{}) (apiResponse, error) {
@@ -247,6 +247,13 @@ func (s *OlseraService) UpdateStatusStockInOut(ctx context.Context, data interfa
 
 func (s *OlseraService) GetProductList(ctx context.Context, params map[string]string) (apiResponse, error) {
 	return s.sendRequest(ctx, http.MethodGet, "product", params)
+}
+
+func (s *OlseraService) GetOutgoingStockList(ctx context.Context, params map[string]string) (apiResponse, error) {
+	return s.sendRequest(ctx, http.MethodGet, "inventory/stockoutgoing", params)
+}
+func (s *OlseraService) GetDetailOutgoingStock(ctx context.Context, params map[string]string) (apiResponse, error) {
+	return s.sendRequest(ctx, http.MethodGet, "inventory/stockinout/detail", params)
 }
 
 func (s *OlseraService) SyncOlseraToken(ctx context.Context) error {
