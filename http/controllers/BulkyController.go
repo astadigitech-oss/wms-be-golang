@@ -877,9 +877,9 @@ func ExportBulkyDocument(c *gin.Context) {
 
 	file := excelize.NewFile()
 
-	allSales, grandTotal := collectSalesData(bags)
+	allSales, grandTotal, grandPriceAfterDisc := collectSalesData(bags)
 
-	createListSheet(file, allSales, grandTotal)
+	createListSheet(file, allSales, grandTotal, bulkyDoc.DiscountBulky, grandPriceAfterDisc)
 	createSummaryCategorySheet(file, allSales)
 	createSummaryBagSheet(file, bags)
 
@@ -1927,12 +1927,14 @@ type saleRow struct {
 	Name     string
 	Qty      int
 	Price    float64
+	PriceAfterDisc    float64
 	Category string
 }
 
-func collectSalesData(bags []models.BagProduct) ([]saleRow, float64) {
+func collectSalesData(bags []models.BagProduct) ([]saleRow, float64, float64) {
 	var rows []saleRow
 	var grandTotal float64
+	var grandTotalAfterDisc float64
 
 	for i, bag := range bags {
 		log.Printf(
@@ -1945,11 +1947,13 @@ func collectSalesData(bags []models.BagProduct) ([]saleRow, float64) {
 		for _, s := range bag.BulkySales {
 			price := s.ProductOldPrice
 			grandTotal += price
+			grandTotalAfterDisc += s.AfterPriceBulkySale
 
 			rowItem := saleRow{
 				Name:     s.ProductName,
 				Qty:      int(s.ProductQuantity),
 				Price:    price,
+				PriceAfterDisc: s.AfterPriceBulkySale,
 				Category: s.ProductCategory,
 			}
 
@@ -1962,15 +1966,15 @@ func collectSalesData(bags []models.BagProduct) ([]saleRow, float64) {
 			rows = append(rows, rowItem)
 		}
 	}
-	return rows, grandTotal
+	return rows, grandTotal, grandTotalAfterDisc
 }
 
-func createListSheet(f *excelize.File, data []saleRow, grandTotal float64) {
+func createListSheet(f *excelize.File, data []saleRow, grandTotal, disc, grandPriceAfterDisc float64) {
 	sheet := "List Products"
 	f.NewSheet(sheet)
 
 	row := 1
-	f.SetSheetRow(sheet, "A1", &[]interface{}{len(data), "", "", grandTotal})
+	f.SetSheetRow(sheet, "A1", &[]interface{}{len(data), "", "", grandTotal, disc, grandPriceAfterDisc})
 	row++
 
 	f.SetSheetRow(sheet, "A2", &[]interface{}{
@@ -1978,12 +1982,14 @@ func createListSheet(f *excelize.File, data []saleRow, grandTotal float64) {
 		"Name Product Bulky Sale",
 		"QTY",
 		"Old Price Bulky Sale",
+		"Discount (%)",
+		"Price After Discount",
 	})
 	row++
 
 	for _, d := range data {
 		f.SetSheetRow(sheet, fmt.Sprintf("A%d", row), &[]interface{}{
-			d.Barcode,  d.Name, d.Qty, d.Price,
+			d.Barcode,  d.Name, d.Qty, d.Price, disc, d.PriceAfterDisc,
 		})
 		row++
 	}
@@ -1996,14 +2002,14 @@ func createListSheet(f *excelize.File, data []saleRow, grandTotal float64) {
 	// numberStyle := styleNumber(f)
 
 	// A1:D1 → total row
-	f.SetCellStyle(sheet, "A1", "D1", greenHeader)
+	f.SetCellStyle(sheet, "A1", "F1", greenHeader)
 
 	// A2:D2 → header kolom
-	f.SetCellStyle(sheet, "A2", "D2", blueHeader)
+	f.SetCellStyle(sheet, "A2", "F2", blueHeader)
 
 	// A3:D{lastRow} → body
 	if lastRow > 2 {
-		f.SetCellStyle(sheet, "A3", fmt.Sprintf("D%d", lastRow), borderOnly)
+		f.SetCellStyle(sheet, "A3", fmt.Sprintf("F%d", lastRow), borderOnly)
 	}
 
 	//set lebar kolom nama product
@@ -2011,6 +2017,8 @@ func createListSheet(f *excelize.File, data []saleRow, grandTotal float64) {
 	f.SetColWidth(sheet, "B", "B", 60)
 	f.SetColWidth(sheet, "C", "C", 6)
 	f.SetColWidth(sheet, "D", "D", 20)
+	f.SetColWidth(sheet, "E", "E", 11)
+	f.SetColWidth(sheet, "F", "F", 20)
 
 }
 

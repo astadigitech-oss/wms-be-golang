@@ -25,6 +25,20 @@ var ExcelStyles = map[string]excelize.Style{
 			Pattern: 1,
 		},
 	},
+	"fill_green": {
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"#C6EFCE"}, // FFC6EFCE
+			Pattern: 1,
+		},
+	},
+	"fill_blue": {
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"#BDD7EE"}, // FFBDD7EE
+			Pattern: 1,
+		},
+	},
 	"header_border_bold": {
 		Border: []excelize.Border{
 			{Type: "left", Style: 1, Color: "000000"},

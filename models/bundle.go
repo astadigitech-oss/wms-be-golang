@@ -10,8 +10,8 @@ type Bundle struct {
 	TotalPrice      float64   `gorm:"type:decimal(18,2);default:0" json:"total_price"` //total old price productnya
 	TotalPriceCustom float64  `gorm:"type:decimal(18,2);default:0" json:"total_price_custom"` //harga setelah diskon category
 	TotalProduct    int64     `gorm:"default:0" json:"total_product"`
-	Status          string    `gorm:"size:50;type:enum('not_sale', 'sale', 'bundle', 'draft');not null" json:"status"`
-	Barcode         string    `gorm:"size:255;unique;not null" json:"barcode"`
+	Status          string    `gorm:"size:15;type:enum('not_sale', 'sale', 'bundle', 'draft');not null" json:"status"`
+	Barcode         string    `gorm:"size:20;unique;not null" json:"barcode"`
 	CategoryID      *uint64    `json:"category_id"`
 	TagColorID      *uint64    `json:"tag_color_id"`
 	WarehouseType   string    `gorm:"type:enum('type1', 'type2');default:'type1';size:50" json:"warehouse_type"`

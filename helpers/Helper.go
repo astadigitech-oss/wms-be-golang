@@ -335,7 +335,7 @@ func GenerateCodeMigrateRepair(db *gorm.DB) (string, error) {
 
 func GenerateBarcodeBundle(db *gorm.DB) (string, error) {
 	const (
-		length   = 5
+		length   = 7
 		maxRetry = 10
 	)
 
