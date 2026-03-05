@@ -2152,15 +2152,14 @@ func ListMigrateProducts(c *gin.Context) {
 	offset := (page - 1) * limit
 
 	//inisialisasi query
-	baseQuery := config.DB.Model(&models.Product{}).
-        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
+	baseQuery := config.DB.Table("products").
         Joins("LEFT JOIN categories ON categories.id = products.category_id").
         Where("products.status NOT IN ?", []string{"dump", "migrate", "scrap_qcd", "sale", "repair"}).
         Where("products.category_id IS NOT NULL").
         Where("products.tag_color_id IS NULL").
         Where("products.quality = ?", "lolos").
 		Where("NOT EXISTS (SELECT 1 FROM migrate_repair_items mri WHERE mri.product_id = products.id)").
-        Where("(categories.name_category LIKE ? OR categories.name_category ?)", "%"+ "ELEKTRONIK" +"%", "%"+ "REFURBISHED" +"%")
+        Where("(categories.name_category LIKE ? OR categories.name_category LIKE ?)", "%"+ "ELEKTRONIK" +"%", "%"+ "REFURBISHED" +"%")
 
 	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {
@@ -2177,6 +2176,7 @@ func ListMigrateProducts(c *gin.Context) {
         NewBarcode     string  `json:"new_barcode"`
         Name        string  `json:"name"`
         Price       float64 `json:"price"`
+        DisplayPrice       float64 `json:"display_price"`
         OldPrice       float64 `json:"old_price"`
         Status      string  `json:"status"`
         Category   *string  `json:"category"`
@@ -2195,9 +2195,10 @@ func ListMigrateProducts(c *gin.Context) {
             products.barcode AS new_barcode, 
             products.name AS name, 
             products.price AS price, 
+            products.display_price AS display_price, 
             products.old_price_product AS old_price, 
             products.status AS status, 
-            COALESCE(color_tags.name_color, categories.name_category) AS category
+            COALESCE(categories.name_category, 'Unknown') AS category
         `).
         Order("products.created_at DESC").
         Limit(limit).Offset(offset).
