@@ -609,6 +609,7 @@ func MigrateDocumentFinish(c *gin.Context) {
 					m.ProductColor,
 					[]string{"display", "expired", "slow_moving"},
 				).
+				Where("p.is_so = ?", "done").
 				Limit(m.ProductTotal).
 				Pluck("p.id", &ids).Error
 
