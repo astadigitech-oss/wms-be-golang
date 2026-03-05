@@ -727,6 +727,7 @@ func storageReport() (map[string]interface{}, error) {
 		priceOldColor			float64
 		priceScrap			float64
 		priceB2B			float64
+		priceOldB2B		float64
 		priceSkuValuation	float64
 
 	)
@@ -749,7 +750,8 @@ func storageReport() (map[string]interface{}, error) {
 	//2. get total product per category di staging
 	go func() {
 		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging)
+		is_so_done := "done"
+		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging, &is_so_done)
 		displayStaging = res
 		if err != nil { errCh <- err }
 
@@ -759,17 +761,18 @@ func storageReport() (map[string]interface{}, error) {
 	//3. get total product per category di b2b
 	go func() {
 		defer wg.Done()
-		res, err := queryB2BAggregate(db)
+		res, err := queryB2BAggregate(db, "selesai")
+		res2, err := queryB2BAggregate(db, "proses")
 		b2bProducts = res
 		if err != nil { errCh <- err }
 
-		totalB2B, priceB2B, _ = sumAggCategory(res)
+		totalB2B, priceB2B, priceOldB2B = sumAggCategory(res2)
 	}()
 
 	//4. get total product per category by status dump
 	go func() {
 		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"dump"}, "lolos", nil)
+		res, err := queryCategoryAggregate(db, []string{"dump"}, "lolos", nil, nil)
 		dumpProducts = res
 		if err != nil { errCh <- err }
 
@@ -779,7 +782,7 @@ func storageReport() (map[string]interface{}, error) {
 	//5. get total product per category by status scrap
 	go func() {
 		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"scrap_qcd"}, "lolos", nil)
+		res, err := queryCategoryAggregate(db, []string{"scrap_qcd"}, "lolos", nil, nil)
 		scrapProducts = res
 		if err != nil { errCh <- err }
 
@@ -789,7 +792,7 @@ func storageReport() (map[string]interface{}, error) {
 	//6. get total product per category by status slow_moving
 	go func() {
 		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"slow_moving"}, "lolos", nil)
+		res, err := queryCategoryAggregate(db, []string{"slow_moving"}, "lolos", nil, nil)
 		slowMoving = res
 		if err != nil { errCh <- err }
 
@@ -835,9 +838,9 @@ func storageReport() (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	totalAll := totalInventory + totalStaging + totalSlowMoving + totalDump + totalScrap + totalColor + totalSKU
-	totalPriceAll := priceInventory + priceStaging + priceSlowMoving + priceDump + priceScrap + priceColor + priceSkuValuation
-	totalOldPriceAll := priceOldInventory + priceOldSlowMoving + priceOldStaging + priceOldColor + priceSkuValuation
+	totalAll := totalInventory + totalStaging + totalSlowMoving + totalDump + totalScrap + totalColor
+	totalPriceAll := priceInventory + priceStaging + priceSlowMoving + priceDump + priceScrap + priceColor
+	totalOldPriceAll := priceOldInventory + priceOldSlowMoving + priceOldStaging + priceOldColor 
 
 	percentageProductDisplay := percent(float64(totalInventory), float64(totalAll))
 	percentageProductDisplayPrice := percent(float64(priceInventory), float64(totalPriceAll))
@@ -890,7 +893,7 @@ func storageReport() (map[string]interface{}, error) {
 		"percentage_staging_price":    percentageProductStagingPrice,
 
 		"total_product_b2b":           totalB2B,
-		"total_product_b2b_price":     priceB2B,
+		"total_product_b2b_price":     priceOldB2B,
 		"percentage_product_b2b":      percentageProductB2B,
 		"percentage_product_b2b_price": percentageProductB2BPrice,
 
@@ -971,7 +974,7 @@ func StorageReportForArchive() (*StorageReportArchive, error) {
 	//2. get total product per category di staging
 	go func() {
 		defer wg.Done()
-		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging)
+		res, err := queryCategoryAggregate(db, []string{"display", "expired"}, "lolos", &staging, nil)
 		displayStaging = res
 		if err != nil { errCh <- err }
 
@@ -1579,7 +1582,7 @@ func queryColorTagAggregate(db *gorm.DB, quality string) ([]colorTagAggregate, e
 	return result, err
 }
 
-func queryB2BAggregate(db *gorm.DB) ([]categoryAggregate, error) {
+func queryB2BAggregate(db *gorm.DB, status string) ([]categoryAggregate, error) {
 	var results []categoryAggregate
 
 	err := db.
@@ -1587,10 +1590,11 @@ func queryB2BAggregate(db *gorm.DB) ([]categoryAggregate, error) {
 		Select(`
 			bs.product_category AS category_name,
 			COUNT(bs.id) AS total_product,
+			SUM(bs.product_old_price) AS total_old_price,
 			SUM(bs.after_price_bulky_sale) AS total_price
 		`).
 		Joins(`JOIN bulky_documents ON bulky_documents.id = bs.bulky_document_id`).
-		Where("bulky_documents.status_bulky = ?", "selesai").
+		Where("bulky_documents.status_bulky = ?", status).
 		Where("bs.product_category IS NOT NULL").
 		Group("bs.product_category").
 		Scan(&results).Error
@@ -1607,6 +1611,7 @@ func queryCategoryAggregate(
 	status []string,
 	quality string,
 	locationType *string, // main / staging / nil
+	is_so *string,
 ) ([]categoryAggregate, error) {
 
 	var result []categoryAggregate
@@ -1624,6 +1629,10 @@ func queryCategoryAggregate(
 		Where("p.tag_color_id IS NULL").
 		Where("p.quality = ?", quality).
 		Where("p.status IN ?", status)
+
+	if is_so != nil {
+		q = q.Where("p.is_so = ?", *is_so)
+	}
 
 	if locationType != nil {
 		q = q.Where("p.location_type = ?", *locationType)
@@ -1660,6 +1669,7 @@ func queryInventoryAggregate(db *gorm.DB) ([]categoryAggregate, error) {
 				AND p.status IN ('display','expired')
 				AND p.location_type = 'main'
 				AND p.quality = 'lolos'
+				AND p.is_so = 'done'
 			GROUP BY c.id, c.name_category
 
 			UNION ALL
