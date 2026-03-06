@@ -29,7 +29,8 @@ import (
 //B2B
 func GetBulkyDocuments(c *gin.Context) {
 	q := c.Query("q")
-	
+	typeFilter := c.Query("type")
+
 	limit := 30
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	offset := (page - 1) * limit
@@ -43,6 +44,10 @@ func GetBulkyDocuments(c *gin.Context) {
 		baseQuery = baseQuery.Where("(code_document LIKE ? OR name_document LIKE ?)", query, query)
 	}
 
+	if typeFilter != "" {
+		baseQuery = baseQuery.Where("type_bulky = ?", typeFilter)
+	}
+
 	if err := baseQuery.Session(&gorm.Session{}).Count(&totalData).Error; err != nil {
 		c.JSON(500, gin.H{"success": false, "message": "Gagal menghitung total data", "error": err.Error()})
 		return
@@ -52,6 +57,33 @@ func GetBulkyDocuments(c *gin.Context) {
 		Offset(offset).Scan(&bulky_documents).Error; err != nil {
 		c.JSON(500, gin.H{"success": false, "message": "Gagal mengambil data bulky document", "error": err.Error()})
 		return
+	}
+
+	for i := range bulky_documents {
+
+		if bulky_documents[i].IsSo != nil && *bulky_documents[i].IsSo == "done" {
+			bulky_documents[i].StatusSOText = "Sudah SO"
+		} else {
+			bulky_documents[i].StatusSOText = "Belum SO"
+		}
+
+		switch bulky_documents[i].IsSale {
+		case "ready":
+			bulky_documents[i].StatusSale = "Siap Dijual"
+		case "sale":
+			bulky_documents[i].StatusSale = "Sudah Terjual"
+		default:
+			bulky_documents[i].StatusSale = "Belum Terjual"
+		}
+
+		switch bulky_documents[i].TypeBulky {
+		case "offline":
+			bulky_documents[i].TypeCargo = "Cargo Offline"
+		case "online":
+			bulky_documents[i].TypeCargo = "Cargo Online"
+		default:
+			bulky_documents[i].TypeCargo = "-"
+		}
 	}
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
@@ -73,7 +105,64 @@ func GetBulkyDocuments(c *gin.Context) {
 		},
 	})
 }
+func GetSummaryBulkySales(c *gin.Context) {
+	type summaryDetail struct {
+		Qty        int64   `json:"qty"`
+		TotalPrice float64 `json:"total_price"`
+	}
 
+	type summaryResult struct {
+		CargoOffline summaryDetail `json:"cargo_offline"`
+		CargoOnline  summaryDetail `json:"cargo_online"`
+		Akumulasi    summaryDetail `json:"akumulasi_total"`
+	}
+
+	type summaryRow struct {
+		TypeBulky string	`json:"type"`
+		Qty	   int64	`json:"qty"`
+		TotalPrice float64 `json:"total_price"`
+	}
+
+	var rows []summaryRow
+	if err := config.DB.Table("bulky_documents").
+		Select(`type_bulky, SUM(total_product) as qty, SUM(after_price_bulky) as total_price`).
+		Where("is_sale = ?", "sale").
+		Where("type_bulky IS NOT NULL").
+		Group("type_bulky").
+		Scan(&rows).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal mengambil data bulky documents", err)
+		return
+	}
+
+	result := summaryResult{}
+
+	for _, row := range rows {
+		switch row.TypeBulky {
+		case "offline":
+			result.CargoOffline = summaryDetail{
+				Qty:        row.Qty,
+				TotalPrice: row.TotalPrice,
+			}
+		case "online":
+			result.CargoOnline = summaryDetail{
+				Qty:        row.Qty,
+				TotalPrice: row.TotalPrice,
+			}
+		}
+	}
+
+	// Akumulasi
+	result.Akumulasi = summaryDetail{
+		Qty:        result.CargoOffline.Qty + result.CargoOnline.Qty,
+		TotalPrice: result.CargoOffline.TotalPrice + result.CargoOnline.TotalPrice,
+	}
+
+	c.JSON(200, gin.H{
+		"success": false,
+		"message": "Data summary penjualan cargo",
+		"resource": result,
+	})
+}
 func DetailBulkyDocument(c *gin.Context) {
 	db := config.DB
 	documentID := c.Param("bulky_doc_id")
@@ -181,8 +270,240 @@ func DetailBulkyDocument(c *gin.Context) {
 		},
 	})
 }
+func SetOnlineReady(c *gin.Context) {
+	docID := c.Param("doc_id")
+	type payloadRequest struct {
+		Length          float64  `json:"length" binding:"required,numeric"`
+		Width           float64  `json:"width" binding:"required,numeric"`
+		Height          float64  `json:"height" binding:"required,numeric"`
+		Weight          float64  `json:"weight" binding:"required,numeric"`
+		FleetEstimation *string  `json:"fleet_estimation"`
+	}
+	
+	var req payloadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
 
+		errorsMap := make(map[string]string)
+		for _, e := range ve {
+			field := e.Field()
+
+			switch field {
+			case "Length":
+				errorsMap["length"] = "Length wajib diisi"
+			case "Width":
+				errorsMap["width"] = "Width wajib diisi"
+			case "Height":
+				errorsMap["height"] = "Height wajib diisi"
+			case "Weight":
+				errorsMap["weight"] = "Weight wajib diisi"
+
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
+
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+	var doc models.BulkyDocument
+
+	// Ambil 1x saja
+	if err := config.DB.First(&doc, docID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "Dokumen tidak ditemukan",
+		})
+		return
+	}
+
+	// Cek sudah terjual
+	if doc.IsSale == "sale" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Dokumen ini sudah berstatus terjual!", nil)
+		return
+	}
+
+	// Harus status selesai
+	if doc.StatusBulky != "selesai" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Dokumen ini masih dalam proses atau belum elesai!", nil)
+		return
+	}
+
+	// Update
+	doc.IsSale = "ready"
+	doc.Length = &req.Length
+	doc.Width = &req.Width
+	doc.Height = &req.Height
+	doc.Weight = &req.Weight
+	doc.FleetEstimation = req.FleetEstimation
+
+	if err := config.DB.Save(&doc).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal update dokumen", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Dokumen berhasil diubah menjadi Cargo Online!",
+		"data":    doc,
+	})
+}
+func ConfirmSaleBulky(c *gin.Context) {
+	docID := c.Param("doc_id")
+	type payloadRequest struct {
+		BuyerID       uint    `json:"buyer_id" binding:"required"`
+		DiscountBulky float64 `json:"discount_bulky" binding:"required,gte=0,lte=100"`
+	}
+	
+	var req payloadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errorsMap := make(map[string]string)
+		for _, e := range ve {
+			field := e.Field()
+
+			switch field {
+			case "BuyerID":
+				errorsMap["buyer_id"] = "Buyer ID wajib diisi"
+			case "DiscountBulky":
+				errorsMap["discount_bulky"] = "Discount Bulky wajib diisi"
+
+			default:
+				errorsMap[strings.ToLower(field)] =
+					"Validasi gagal pada field " + field
+			}
+		}
+
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false,
+			"message": "Validasi gagal",
+			"errors": errorsMap,
+		})
+		return
+	}
+
+	var doc models.BulkyDocument
+
+	if err := config.DB.Preload("BulkySales").First(&doc, docID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "Dokumen tidak ditemukan",
+		})
+		return
+	}
+
+	// cek sudah sale
+	if doc.IsSale == "sale" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Dokumen ini sudah berstatus terjual!",
+		})
+		return
+	}
+
+	// cek proses
+	if doc.StatusBulky == "proses" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Dokumen ini masih proses!",
+		})
+		return
+	}
+
+	// cek online harus ready dulu
+	if doc.TypeBulky == "online" && doc.IsSale != "ready" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Dokumen Cargo Online belum siap dijual (Ready)! Silakan lengkapi data dimensi/armada terlebih dahulu.",
+		})
+		return
+	}
+
+	// cek buyer
+	var buyer models.Buyer
+	if err := config.DB.First(&buyer, req.BuyerID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Buyer tidak ditemukan",
+		})
+		return
+	}
+
+	err := config.DB.Transaction(func(tx *gorm.DB) error {
+
+		var totalAfterPrice float64
+
+		for _, item := range doc.BulkySales {
+
+			newPrice := item.ProductOldPrice - (item.ProductOldPrice * req.DiscountBulky / 100)
+
+			if err := tx.Model(&models.BulkySale{}).
+				Where("id = ?", item.ID).
+				Update("after_price_bulky_sale", newPrice).Error; err != nil {
+				return err
+			}
+
+			totalAfterPrice += newPrice
+		}
+
+		// update document
+		if err := tx.Model(&doc).
+			Updates(map[string]interface{}{
+				"is_sale":           "sale",
+				"buyer_id":          buyer.ID,
+				"name_buyer":        buyer.NameBuyer,
+				"discount_bulky":    req.DiscountBulky,
+				"after_price_bulky": totalAfterPrice,
+			}).Error; err != nil {
+			return err
+		}
+
+		doc.AfterPriceBulky = totalAfterPrice
+		doc.DiscountBulky = req.DiscountBulky
+		doc.IsSale = "sale"
+		doc.BuyerID = &buyer.ID
+		doc.NameBuyer = &buyer.NameBuyer
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Error: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Cargo %s berhasil terjual!", doc.TypeBulky),
+		"data":    doc,
+	})
+}
 func BagByUser(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
@@ -289,7 +610,6 @@ func BagByUser(c *gin.Context) {
 		},
 	})
 }
-
 func ShowBagProductDetail(c *gin.Context) {
 	db := config.DB
 	// =========================
@@ -434,22 +754,52 @@ func ShowBagProductDetail(c *gin.Context) {
 		},
 	})
 }
-
 func CreateBulkyDocument(c *gin.Context) {
 	type payloadRequest struct {
 		DiscountBulky float64 `json:"discount_bulky"`
 		BuyerID       *uint64 `json:"buyer_id"`
 		NameDocument  string  `json:"name_document" binding:"required"`
+		Type		  string  `json:"type" binding:"required,oneof=offline online"`
 	}
 
 	user := c.MustGet("auth_user").(models.User)
 
 	var req payloadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errors := make(map[string]string)
+		for _, e := range ve {
+			field := strings.ToLower(e.Field())
+
+			switch field {
+				case "namedocument":
+					if e.Tag() == "required" {
+						errors["name_document"] = "Nama dokumen wajib diisi"
+					}
+				case "type":
+					if e.Tag() == "required" {
+						errors["type"] = "Tipe dokumen wajib diisi"
+					}else {
+						errors["type"] = "Tipe harus offline atau online"
+					}
+				default:
+					errors[field] = "terjadi error pada field ini"
+			}
+		}
+
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"success":  false,
-			"message": "Input tidak valid!",
-			"error": err.Error(),
+			"status":  false,
+			"message": "Validasi gagal",
+			"errors":  errors,
 		})
 		return
 	}
@@ -563,7 +913,9 @@ func CreateBulkyDocument(c *gin.Context) {
 		AfterPriceBulky:     0,
 		CategoryBulky:       nil,
 		StatusBulky:         "proses",
+		IsSale: 		   "not_sale",
 		NameDocument:        finalName,
+		TypeBulky: 			req.Type,
 	}
 
 	if buyer != nil {
@@ -593,7 +945,6 @@ func CreateBulkyDocument(c *gin.Context) {
 	})
 
 }
-
 func UpdateBulkyDocument(c *gin.Context) {
 	idParam := c.Param("bulky_doc_id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
@@ -713,7 +1064,6 @@ func UpdateBulkyDocument(c *gin.Context) {
 		"data":    bulky,
 	})
 }
-
 func BulkyDocumentFinish(c *gin.Context) {
 	doc_id := c.Param("bulky_doc_id")
 
@@ -848,7 +1198,6 @@ func BulkyDocumentFinish(c *gin.Context) {
 		},
 	})
 }
-
 func ExportBulkyDocument(c *gin.Context) {
 	doc_id := c.Param("doc_id")
 
@@ -904,11 +1253,66 @@ func ExportBulkyDocument(c *gin.Context) {
 		"data":    downloadURL,
 	})
 }
-
-
 func StoreBagBulkyDocument(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
-	doc_id := c.Param("doc_id")
+
+	type payloadRequest struct {
+		BulkyDocumentID uint64  `json:"bulky_document_id" binding:"required"`
+		Type             string  `json:"type" binding:"required,oneof=category color"`
+		CategoryID       *uint64 `json:"category_id" binding:"required_if=Type category,omitempty"`
+		ColorName        string  `json:"color_name" binding:"required_if=Type color,omitempty,oneof=merah kuning big small"`
+	}
+
+	var req payloadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+
+		ve, ok := err.(validator.ValidationErrors)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  false,
+				"message": "Format JSON tidak valid",
+			})
+			return
+		}
+
+		errors := make(map[string]string)
+		for _, e := range ve {
+			field := strings.ToLower(e.Field())
+
+			switch field {
+
+			case "bulkydocumentid":
+				if e.Tag() == "required" {
+					errors["bulky_document_id"] = "Bulky document wajib diisi"
+				}
+			case "type":
+				if e.Tag() == "required" {
+					errors["type"] = "Tipe wajib diisi"
+				} else if e.Tag() == "oneof" {
+					errors["type"] = "Tipe harus category atau color"
+				}
+			case "categoryid":
+				if e.Tag() == "required_if" {
+					errors["category_id"] = "Category wajib diisi jika tipe category"
+				}
+			case "colorname":
+				if e.Tag() == "required_if" {
+					errors["color_name"] = "Color wajib diisi jika tipe color"
+				} else if e.Tag() == "oneof" {
+					errors["color_name"] = "Color harus merah, kuning, big, atau small"
+				}
+			default:
+				errors[field] = "Terjadi error pada field ini"
+			}
+		}
+
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Validasi gagal",
+			"errors":  errors,
+		})
+		return
+	}
 
 	//start transaction
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
@@ -934,7 +1338,7 @@ func StoreBagBulkyDocument(c *gin.Context) {
 	// =========================
 	var bulkyDoc models.BulkyDocument
 	if err := tx.
-		Where("id = ? AND status_bulky = ?", doc_id, "proses").
+		Where("id = ? AND status_bulky = ?", req.BulkyDocumentID, "proses").
 		First(&bulkyDoc).Error; err != nil {
 
 		tx.Rollback()
@@ -943,6 +1347,33 @@ func StoreBagBulkyDocument(c *gin.Context) {
 			"message": "Bulky document tidak ditemukan atau sudah done",
 		})
 		return
+	}
+	// =========================
+	// Setup category name
+	// =========================
+	var categoryName string
+	if req.Type == "category" {
+		if req.CategoryID == nil {
+			helpers.ErrorResponse(c, 500, "Category ID wajib diisi untuk type category", nil)
+			return
+		}
+		
+		var category models.Category
+		if err := tx.
+			Where("id = ?", req.CategoryID).
+			First(&category).Error; err != nil {
+
+			tx.Rollback()
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"message": "Category tidak ditemukan",
+			})
+			return
+		}
+		categoryName = category.NameCategory
+	}else {
+		categoryName = req.ColorName
+		req.CategoryID = nil
 	}
 
 	// =========================
@@ -1022,6 +1453,9 @@ func StoreBagBulkyDocument(c *gin.Context) {
 	newBag := models.BagProduct{
 		UserID:           uint64(user.ID),
 		BulkyDocumentID:  bulkyDoc.ID,
+		Type: 		   req.Type,
+		CategoryID: 	 req.CategoryID,
+		CategoryBag: 	categoryName,
 		TotalProduct:     0,
 		Status:           "proses",
 		NameBag:          fmt.Sprintf("%s-%d", username, nextNumber),
@@ -1048,7 +1482,6 @@ func StoreBagBulkyDocument(c *gin.Context) {
 		"data":    newBag,
 	})
 }
-
 func DestroyBagBulkyDocument(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 	bagID := c.Param("bag_id")
@@ -1173,6 +1606,18 @@ func DestroyBagBulkyDocument(c *gin.Context) {
 	}
 
 	// =========================
+	// Hapus sales
+	// =========================
+	if err := tx.Where("bag_product_id = ?", bag.ID).Delete(&models.BulkySale{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "Gagal menghapus sales",
+		})
+		return
+	}
+
+	// =========================
 	// Hapus bag product
 	// =========================
 	if err := tx.Delete(&bag).Error; err != nil {
@@ -1195,7 +1640,6 @@ func DestroyBagBulkyDocument(c *gin.Context) {
 		"data":    bag,
 	})
 }
-
 func StoreBulkySale(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
@@ -1287,6 +1731,7 @@ func StoreBulkySale(c *gin.Context) {
 	}
 
 	var (
+		bklProduct       models.BklProduct
 		product       models.Product
 		bundle        models.Bundle
 		isBundle	  bool
@@ -1296,34 +1741,74 @@ func StoreBulkySale(c *gin.Context) {
 	)
 
 	isBundle = false
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Preload("Category").
-		Where("barcode = ?", req.BarcodeProduct).
-		First(&product).Error
-
-	if err != nil {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	if bag.Type == "category" {
+		category := ""
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Preload("Category").
 			Where("barcode = ?", req.BarcodeProduct).
-			First(&bundle).Error; err != nil {
+			First(&product).Error
 
+		if product.Category != nil {
+			category = product.Category.NameCategory
+		}
+
+		if err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Preload("Category").
+				Where("barcode = ?", req.BarcodeProduct).
+				First(&bundle).Error; err != nil {
+	
+				tx.Rollback()
+				c.JSON(404, gin.H{
+					"success": false,
+					"message": "Produk / bundle tidak ditemukan",
+				})
+				return
+			}
+			isBundle = true
+			category = bundle.Category.NameCategory
+		}
+	
+		if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
 			tx.Rollback()
-			c.JSON(404, gin.H{
+			c.JSON(400, gin.H{
 				"success": false,
-				"message": "Produk / bundle tidak ditemukan",
+				"message": "Product / bundle sudah dijual",
 			})
 			return
 		}
-		isBundle = true
-	}
 
-	if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
-		tx.Rollback()
-		c.JSON(400, gin.H{
-			"success": false,
-			"message": "Product / bundle sudah dijual",
-		})
-		return
+		if !strings.EqualFold(bag.CategoryBag, category) {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 400, "Kategori produk tidak sesuai dengan kategori bag", nil)
+			return
+		}
+	}else {
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("ColorTag").
+			Where("barcode = ?", req.BarcodeProduct).
+			First(&bklProduct).Error
+
+		if err != nil {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"success": false,
+				"message": "Data bkl product tidak ditemukan",
+				"error": err.Error(),
+			})
+			return
+		}
+		if bklProduct.Status == "sale" {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 400, "Produk bkl sudah dijual", nil)
+			return
+		}
+		//validasi kecocokan tag color
+		if !strings.EqualFold(bag.CategoryBag, bklProduct.ColorTag.NameColor) {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 400, "Warna produk tidak sesuai dengan warna bag", nil)
+			return
+		}
 	}
 
 	bulkySale := models.BulkySale{
@@ -1331,51 +1816,83 @@ func StoreBulkySale(c *gin.Context) {
 		BagProductID:    bag.ID,
 	}
 
-	if isBundle {
-		oldPrice = bundle.TotalPrice
-		afterPrice = oldPrice - (oldPrice * bulkyDoc.DiscountBulky / 100.0)
-		
-		bulkySale.BundleBarcode	= &req.BarcodeProduct
-		bulkySale.ProductName =     	bundle.NameBundle
-		bulkySale.ProductCategory =     bundle.Category.NameCategory
-		bulkySale.ProductOldPrice =     oldPrice
-		bulkySale.ProductPrice =     bundle.TotalPriceCustom
-		bulkySale.ProductStatusBefore =     bundle.Status
-		bulkySale.ProductQuantity =     bundle.TotalProduct
-		bulkySale.AfterPriceBulkySale =     afterPrice
+	if bag.Type == "category" {
+		if isBundle {
+			oldPrice = bundle.TotalPrice
+			afterPrice = oldPrice - (oldPrice * bulkyDoc.DiscountBulky / 100.0)
+			
+			bulkySale.BundleBarcode				= &req.BarcodeProduct
+			bulkySale.ProductName 				=     	bundle.NameBundle
+			bulkySale.ProductCategory 			=     bundle.Category.NameCategory
+			bulkySale.ProductOldPrice 			=     oldPrice
+			bulkySale.ProductPrice 				=     bundle.TotalPriceCustom
+			bulkySale.ProductStatusBefore		=     bundle.Status
+			bulkySale.ProductQuantity 			=     bundle.TotalProduct
+			bulkySale.AfterPriceBulkySale		=     afterPrice
+			bulkySale.DisplayPrice				=     bundle.TotalPriceCustom
 
-		if err := tx.Model(&bundle).Update("status", "sale").Error; err != nil {
-			tx.Rollback()
-			c.JSON(500, gin.H{"success": false, "message": "Gagal update status Bundle", "error": err.Error()})
-			return
+			if err := tx.Model(&bundle).Update("status", "sale").Error; err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{"success": false, "message": "Gagal update status Bundle", "error": err.Error()})
+				return
+			}
+			//recalculate rack
+			if bundle.RackID != nil {
+				rackID := *bundle.RackID
+				if err := helpers.RecalculateRack(tx, rackID); err != nil {
+					tx.Rollback()
+					c.JSON(500, gin.H{"success": false, "message": "Gagal update rak", "error": err.Error()})
+					return
+				}
+			}
+		}else {
+			oldPrice = product.OldPriceProduct
+			afterPrice = oldPrice - (oldPrice * bulkyDoc.DiscountBulky / 100.0)
+				
+			bulkySale.ProductBarcode 		= &req.BarcodeProduct
+			bulkySale.ProductName 			= product.Name
+			bulkySale.ProductCategory 		= product.Category.NameCategory
+			bulkySale.ProductOldPrice 		= oldPrice
+			bulkySale.ProductPrice 			= product.Price
+			bulkySale.ProductStatusBefore 	= product.Status
+			bulkySale.ProductQuantity 		= product.Quantity
+			bulkySale.AfterPriceBulkySale 	= afterPrice
+			bulkySale.DisplayPrice			= product.DisplayPrice
+	
+			if err := tx.Model(&product).Update("status", "sale").Error; err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{"success": false, "message": "Gagal update status product", "error": err.Error()})
+				return
+			}
+	
+			//recalculate rack
+			if product.RackID != nil {
+				rackID := *product.RackID
+				if err := helpers.RecalculateRack(tx, rackID); err != nil {
+					tx.Rollback()
+					c.JSON(500, gin.H{"success": false, "message": "Gagal update rak", "error": err.Error()})
+					return
+				}
+			}
 		}
 	}else {
-		oldPrice = product.OldPriceProduct
+		oldPrice = bklProduct.OldPriceProduct
 		afterPrice = oldPrice - (oldPrice * bulkyDoc.DiscountBulky / 100.0)
 			
-		bulkySale.ProductBarcode = 		&req.BarcodeProduct
-		bulkySale.ProductName =     	product.Name
-		bulkySale.ProductCategory =     product.Category.NameCategory
-		bulkySale.ProductOldPrice =     oldPrice
-		bulkySale.ProductPrice =     product.Price
-		bulkySale.ProductStatusBefore =     product.Status
-		bulkySale.ProductQuantity =     product.Quantity
-		bulkySale.AfterPriceBulkySale =     afterPrice
+		bulkySale.BklBarcode 			=	&req.BarcodeProduct
+		bulkySale.ProductName 			=	bklProduct.Name
+		bulkySale.ProductCategory 		=	bklProduct.ColorTag.NameColor
+		bulkySale.ProductOldPrice 		=	oldPrice
+		bulkySale.ProductPrice 			=	bklProduct.Price
+		bulkySale.ProductStatusBefore 	=	bklProduct.Status
+		bulkySale.ProductQuantity 		=	bklProduct.Quantity
+		bulkySale.AfterPriceBulkySale 	=	afterPrice
+		bulkySale.DisplayPrice			=	bklProduct.DisplayPrice
 
-		if err := tx.Model(&product).Update("status", "sale").Error; err != nil {
+		if err := tx.Model(&bklProduct).Update("status", "sale").Error; err != nil {
 			tx.Rollback()
 			c.JSON(500, gin.H{"success": false, "message": "Gagal update status product", "error": err.Error()})
 			return
-		}
-
-		//recalculate rack
-		if product.RackID != nil {
-			rackID := *product.RackID
-			if err := helpers.RecalculateRack(tx, rackID); err != nil {
-				tx.Rollback()
-				c.JSON(500, gin.H{"success": false, "message": "Gagal update rak", "error": err.Error()})
-				return
-			}
 		}
 	}
 
@@ -1415,7 +1932,6 @@ func StoreBulkySale(c *gin.Context) {
 		"data":    bulkySale,
 	})
 }
-
 func ImportFileBulkySale(c *gin.Context) {
 	db := config.DB
 	user := c.MustGet("auth_user").(models.User)
@@ -1541,7 +2057,6 @@ func ImportFileBulkySale(c *gin.Context) {
 		},
 	})
 }
-
 func DeleteBulkySale(c *gin.Context) {
 	db := config.DB
 	bulky_sale_id := c.Param("bulky_sale_id")
@@ -1638,7 +2153,7 @@ func DeleteBulkySale(c *gin.Context) {
 				return
 			}
 		}
-	} else {
+	} else if bulkySale.BundleBarcode != nil {
 		// kalau bukan product, cek bundle
 		var bundle models.Bundle
 		if err := tx.
@@ -1670,6 +2185,50 @@ func DeleteBulkySale(c *gin.Context) {
 			c.JSON(500, gin.H{
 				"success": false,
 				"message": "Gagal update status bundle",
+				"error": err.Error(),
+			})
+			return
+		}
+
+		if bundle.RackID != nil {
+			rackID := *bundle.RackID
+			if err := helpers.RecalculateRack(tx, rackID); err != nil {
+				tx.Rollback()
+				c.JSON(500, gin.H{"success": false, "message": "Gagal update rak", "error": err.Error()})
+				return
+			}
+		}
+	}else {
+		var product models.BklProduct
+		if err := tx.
+			Where("barcode = ?", bulkySale.BklBarcode).
+			First(&product).Error; err != nil {
+
+			tx.Rollback()
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(404, gin.H{
+					"success": false,
+					"message": fmt.Sprintf("Product bkl dengan barcode %s tidak ditemukan", *bulkySale.BklBarcode),
+				})
+			}else {
+				c.JSON(500, gin.H{
+					"success": false,
+					"message": "Gagal mencari product bkl",
+					"error": err.Error(),
+				})
+			}
+
+			return
+		}
+
+		// product ketemu
+		if err := tx.Model(&product).
+			Update("status", bulkySale.ProductStatusBefore). Error; err != nil {
+			
+			tx.Rollback()
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Gagal update status product",
 				"error": err.Error(),
 			})
 			return
@@ -1746,6 +2305,215 @@ func DeleteBulkySale(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true,
 		"message": "Data berhasil dihapus",
+	})
+}
+func ProductsCargo(c *gin.Context) {
+	q := c.Query("q")
+	doc_id := c.Query("bulky_document_id")
+
+	limit := 15
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	offset := (page - 1) * limit
+
+	user := c.MustGet("auth_user").(models.User)
+
+	var activeBag struct {
+		Type        string
+		CategoryBag string
+	}
+
+	if doc_id == "" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Query bulky_document_id wajib ada", nil)
+		return
+	}
+
+	config.DB.Model(&models.BagProduct{}).
+		Select("type, category_bag").
+		Where("user_id = ? AND bulky_document_id = ? AND status = 'proses'",user.ID, doc_id).
+		First(&activeBag)
+
+	type productCargo struct {
+		Barcode     string    `json:"barcode"`
+		Name        string    `json:"name"`
+		Price		float64   `json:"price"`
+		Category    string    `json:"category"`
+	}
+	
+	// =========================
+	// CASE TYPE COLOR
+	// =========================
+	if activeBag.Type == "color" {
+
+		query := config.DB.Table("bkl_products bp").
+			Select(`
+				bp.id AS id,
+				bp.barcode as barcode,
+				bp.name as name,
+				bp.price as price,
+				ct.name_color as category,
+				bp.created_at as created_date
+			`).
+			Joins("JOIN color_tags ct ON bp.tag_color_id = ct.id").
+			Where("bp.category_id IS NULL").
+			Where("bp.tag_color_id IS NOT NULL").
+			Where("quality = ?", "lolos").
+			Where("status IN ?", []string{"display", "expired", "slow_moving"}).
+			Where("LOWER(ct.name_color) = ?", strings.ToLower(activeBag.CategoryBag))
+
+		if q != "" {
+			search := "%" + q + "%"
+			query = query.Where(`
+				bp.barcode LIKE ? OR
+				bp.name LIKE ? OR
+				ct.name_color LIKE ?`,
+				search, search, search)
+		}
+
+		var totalProducts int64
+		if err := query.Session(&gorm.Session{}).Count(&totalProducts).Error; err != nil {
+			helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal menghitung total produk", err)
+			return
+		}
+
+		var products []productCargo
+
+		if err := query.Order("created_date desc").
+			Limit(limit).Offset(offset).
+			Scan(&products).Error; err != nil {
+
+			c.JSON(500, gin.H{
+				"success": false,
+				"message": "Gagal mengambil data produk",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		// pagination link
+		lastPage := int(math.Ceil(float64(totalProducts) / float64(limit)))
+		links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+		c.JSON(200, gin.H{
+			"status":  true,
+			"message": "List data product color (BKL)",
+			"resource":    gin.H{
+				"data": products,
+				"pagination": gin.H{
+					"current_page": page,
+					"from":         offset + 1,
+					"to":           offset + len(products),
+					"last_page":    lastPage,
+					"per_page":     limit,
+					"total":       totalProducts,
+					"links":       links,
+				},
+			},
+		})
+
+		return
+	}
+	// =========================
+	// CASE CATEGORY / DEFAULT
+	// =========================
+
+	// SEARCH CONDITION
+	searchCondition := ""
+	args := []interface{}{}
+
+	if q != "" {
+		search := "%" + q + "%"
+		searchCondition = `
+			AND (
+				t.barcode LIKE ?
+				OR t.name LIKE ?
+				OR t.category LIKE ?
+			)
+		`
+		args = append(args, search, search, search)
+	}
+
+	// UNION QUERY (DATA)
+	baseQuery := `
+		SELECT
+			p.barcode AS barcode,
+			p.name AS name,
+			p.price AS price,
+			c.name_category AS category,
+			p.created_at AS created_date
+		FROM products p
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE p.tag_color_id IS NULL
+			AND p.category_id IS NOT NULL
+			AND p.status IN ('display','expired','slow_moving')
+			AND p.quality = 'lolos'
+			AND c.name_category = ?
+
+		UNION ALL
+
+		SELECT
+			b.barcode AS barcode,
+			b.name_bundle AS name,
+			b.total_price_custom AS price,
+			c.name_category AS category,
+			b.created_at AS created_date
+		FROM bundles b
+		LEFT JOIN categories c ON c.id = b.category_id
+		WHERE b.total_price_custom >= 100000
+			AND b.tag_color_id IS NULL
+			AND b.category_id IS NOT NULL
+			AND b.status != 'sale'
+			AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
+			AND c.name_category = ?
+	`
+
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (%s) t WHERE 1=1 %s
+	`, baseQuery, searchCondition)
+
+	argsBase := []interface{}{activeBag.CategoryBag, activeBag.CategoryBag}
+	argsBase = append(argsBase, args...)
+
+	var totalProduct int64
+	if err := config.DB.Raw(countQuery, argsBase...).Scan(&totalProduct).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal menghitung total produk", err)
+		return
+	}
+
+	dataQuery := fmt.Sprintf(`
+		SELECT * FROM (%s) t 
+		WHERE 1=1 %s 
+		ORDER BY created_date DESC 
+		LIMIT ? OFFSET ?
+	`, baseQuery, searchCondition)
+
+	argsData := append([]interface{}{}, argsBase...)
+	argsData = append(argsData, limit, offset)
+
+	var results []productCargo
+	if err := config.DB.Raw(dataQuery, argsData...).Scan(&results).Error; err != nil {
+		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+		return
+	}
+
+	// pagination link
+	lastPage := int(math.Ceil(float64(totalProduct) / float64(limit)))
+	links := helpers.BuildPaginationLinks(c, page, lastPage)
+
+	c.JSON(200, gin.H{
+		"status":  true,
+		"message": "List data product category",
+		"resource": gin.H{
+			"data": results,
+			"pagination": gin.H{
+				"current_page": page,
+				"from":         offset + 1,
+				"to":           offset + len(results),
+				"last_page":    lastPage,
+				"per_page":     limit,
+				"total":       totalProduct,
+				"links":       links,
+			},
+		},
 	})
 }
 

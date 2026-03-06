@@ -4921,7 +4921,7 @@ func GetProductsForSale(c *gin.Context) {
 			LEFT JOIN categories c ON c.id = p.category_id
 			WHERE p.tag_color_id IS NULL
 				AND p.category_id IS NOT NULL
-				AND p.status != 'sale'
+				AND p.status IN ('display','expired','slow_moving')
 				AND p.quality = 'lolos'
 
 			UNION ALL
@@ -4966,7 +4966,7 @@ func GetProductsForSale(c *gin.Context) {
             LEFT JOIN categories c ON c.id = p.category_id
             WHERE p.tag_color_id IS NULL
                 AND p.category_id IS NOT NULL
-				AND p.status != 'sale'
+				AND p.status IN ('display','expired','slow_moving')
 				AND p.quality = 'lolos'
 
             UNION ALL

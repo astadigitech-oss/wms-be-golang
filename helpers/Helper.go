@@ -551,17 +551,16 @@ func GenerateBulkyCode(tx *gorm.DB) (string, error) {
 	sequence := 1
 
 	if err == nil {
-		// Contoh: B2B-012026-001
-		parts := strings.Split(lastDoc.CodeDocument, "-")
-		if len(parts) > 1 {
-			if lastSeq, err := strconv.Atoi(parts[2]); err == nil {
-				sequence = lastSeq + 1
-			}
+		// Contoh: B2B012026001
+		prefix := fmt.Sprintf("B2B%s%s", month, year) // B2B012026
+		parts := lastDoc.CodeDocument[len(prefix):] // ambil "001"
+		if num, err := strconv.Atoi(parts); err == nil {
+			sequence = num + 1
 		}
 	}
 
 	code := fmt.Sprintf(
-		"B2B-%s%s-%03d",
+		"B2B%s%s%03d",
 		month,
 		year,
 		sequence,

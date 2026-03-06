@@ -305,11 +305,15 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
 			//B2B
 			rg.GET("bulky-documents", controllers.GetBulkyDocuments) //BulkyController.go
+			rg.GET("bulky-documents/summary-sales", controllers.GetSummaryBulkySales) //BulkyController.go
 			rg.GET("bulky-documents/:doc_id/bags", controllers.BagByUser) //BulkyController.go
 			rg.GET("bulky-documents/bags/:bag_id", controllers.ShowBagProductDetail) //BulkyController.go
 			rg.GET("bulky-documents/:doc_id/detail", controllers.DetailBulkyDocument) //BulkyController.go
+			rg.GET("bulky-product-cargo", controllers.ProductsCargo) //BulkyController.go
 			rg.POST("bulky-documents", controllers.CreateBulkyDocument) //BulkyController.go
-			rg.POST("bulky-documents/:doc_id/bags", controllers.StoreBagBulkyDocument) //BulkyController.go
+			rg.POST("bulky-documents/:doc_id/ready-online", controllers.SetOnlineReady) //BulkyController.go
+			rg.POST("bulky-documents/:doc_id/confirm-sale", controllers.ConfirmSaleBulky) //BulkyController.go
+			rg.POST("bulky-documents/bags", controllers.StoreBagBulkyDocument) //BulkyController.go
 			rg.POST("bulky-documents/:doc_id/export", controllers.ExportBulkyDocument) //BulkyController.go
 			rg.POST("bulky-sales/product", controllers.StoreBulkySale) //BulkyController.go
 			rg.POST("bulky-sales/product/import", controllers.ImportFileBulkySale) //BulkyController.go

@@ -11,7 +11,8 @@ type BulkySale struct {
 
 	ProductBarcode         		*string      `gorm:"size:255;index" json:"product_barcode"` // merujuk kepada data product
 	BundleBarcode       		*string      `gorm:"size:255;index" json:"bundle_barcode"` // merujuk kepada data bundle
-	
+	BklBarcode       			*string      `gorm:"size:255;index" json:"bkl_barcode"` // merujuk kepada data bkl product
+
 	ProductName       			string      `gorm:"size:255;not null" json:"product_name"`
 	ProductCategory       		string      `gorm:"size:255;not null" json:"product_category"`
 	ProductOldPrice       		float64      `gorm:"type:decimal(15,2);not null" json:"product_old_price"`
