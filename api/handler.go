@@ -98,8 +98,9 @@ func RouteHandler(r *gin.Engine) {
 			// Manual Inbound
 			rg.POST("/products/manual", controllers.AddProductManual) //ProductController.go
 			//Riwayat Check Routes
-			rg.GET("/check-histories", controllers.CheckHistories) //DocumentController.go
-			rg.GET("/check-histories/:history_id", controllers.DetailHistory) //DocumentController.go
+			rg.GET("/histories", controllers.CheckHistories) //DocumentController.go
+			rg.GET("/histories/:history_id", controllers.DetailHistory) //DocumentController.go
+			rg.DELETE("/histories/:history_id", controllers.DeleteHistory) //DocumentController.go
 		})
 
 		/* ==================== Stagging Routes ==================== */

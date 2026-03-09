@@ -578,67 +578,61 @@ func CheckHistories(c *gin.Context) {
 		},
 	})
 }
-
 func DetailHistory(c *gin.Context) {
-	q := strings.TrimSpace(c.Query("q"))
+	riwayat_id := c.Param("history_id")
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	if page < 1 {
-		page = 1
-	}
-	limit := 50
-	offset := (page - 1) * limit
-
-	var riwayatChecks []models.RiwayatCheck
-	var total int64
-
-	db := config.DB.Model(&models.RiwayatCheck{})
-
-	// SEARCH: code_document OR base_document
-	if q != "" {
-		db = db.Where(
-			"(code_document LIKE ? OR name_document LIKE ?)",
-			"%"+q+"%", "%"+q+"%",
-		)
-	}
-
-	// TOTAL COUNT (for pagination info)
-	if err := db.Count(&total).Error; err != nil {
-		c.JSON(500, gin.H{"success": false, "message": err})
-		return
-	}
+	var riwayatChecks models.RiwayatCheck
 
 	// GET DATA
-	if err := db.
-		Order("created_at DESC").
-		Limit(limit).
-		Offset(offset).
-		Find(&riwayatChecks).Error; err != nil {
-
-		c.JSON(500, gin.H{"success": false, "message": err.Error()})
+	if err := config.DB.First(&riwayatChecks, riwayat_id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			helpers.ErrorResponse(c, 404, "Riwayat check tidak ditemukan", err)
+		}else {
+			helpers.ErrorResponse(c, 500, "Gagal mengambil riwayat check", err)
+		}
+		// c.JSON(500, gin.H{"success": false, "message": err.Error()})
 		return
 	}
 
-	lastPage := int(math.Ceil(float64(total) / float64(limit)))
+	// FINAL RESPONSE
+	c.JSON(200, gin.H{
+		"success":  true,
+		"message": "Detail Riwayat",
+		"resource": riwayatChecks,
+	})
+}
+func DeleteHistory(c *gin.Context) {
+	riwayat_id := c.Param("history_id")
 
-	// pagination links
-	links := helpers.BuildPaginationLinks(c, page, lastPage)
+	var riwayatChecks models.RiwayatCheck
+
+	// GET DATA
+	if err := config.DB.First(&riwayatChecks, riwayat_id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			helpers.ErrorResponse(c, 404, "Riwayat check tidak ditemukan", err)
+		}else {
+			helpers.ErrorResponse(c, 500, "Gagal mengambil riwayat check", err)
+		}
+		// c.JSON(500, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+
+	if err := config.DB.Where("riwayat_check_id = ?", riwayatChecks.ID).Delete(&models.Notification{}).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal menghapus notifikasi", err)
+		return
+	}
+
+	if err := config.DB.Delete(&riwayatChecks).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal menghapus riwayat check", err)
+		return
+	}
 
 	// FINAL RESPONSE
 	c.JSON(200, gin.H{
 		"data": gin.H{
 			"status":  true,
-			"message": "List Documents",
-			"resource": gin.H{
-				"current_page":   page,
-				"data":           riwayatChecks,
-				"from":           offset + 1,
-				"last_page":      lastPage,
-				"links":          links,
-				"per_page":       limit,
-				"to":             offset + len(riwayatChecks),
-				"total":          total,
-			},
+			"message": "Data Riwayat berhasil dihapus",
+			"resource": riwayatChecks,
 		},
 	})
 }
