@@ -1704,7 +1704,7 @@ func GetProductsByColor(c *gin.Context) {
         Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
         Where("products.tag_color_id IS NOT NULL").
         Where("products.category_id IS NULL").
-        Where("products.is_so IS NULL").
+        // Where("products.is_so IS NULL").
         Where("products.status = ?", "display").
         Where("products.location_type = ?", "main").
         Where("products.quality = ?", "lolos").

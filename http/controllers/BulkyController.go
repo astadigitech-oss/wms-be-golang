@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -320,25 +321,50 @@ func SetOnlineReady(c *gin.Context) {
 		return
 	}
 
-	var doc models.BulkyDocument
+	//start transaction
+	tx := config.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction", "error": tx.Error.Error()})
+		return
+	}
+    
+    // Pastikan Rollback jika terjadi panic
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false, 
+				"message": "Internal server error",
+				"error": fmt.Sprintf("%v", r),
+			})
+        }
+    }()
 
-	// Ambil 1x saja
-	if err := config.DB.First(&doc, docID).Error; err != nil {
+	var doc models.BulkyDocument
+	if err := tx.Preload("BagProducts.BulkySales").First(&doc, docID).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"message": "Dokumen tidak ditemukan",
 		})
 		return
 	}
+	if doc.TypeBulky != "online" {
+		tx.Rollback()
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Dokumen ini bukan cargo online!", nil)
+		return
+	}
 
 	// Cek sudah terjual
 	if doc.IsSale == "sale" {
+		tx.Rollback()
 		helpers.ErrorResponse(c, http.StatusBadRequest, "Dokumen ini sudah berstatus terjual!", nil)
 		return
 	}
 
 	// Harus status selesai
 	if doc.StatusBulky != "selesai" {
+		tx.Rollback()
 		helpers.ErrorResponse(c, http.StatusBadRequest, "Dokumen ini masih dalam proses atau belum elesai!", nil)
 		return
 	}
@@ -351,10 +377,40 @@ func SetOnlineReady(c *gin.Context) {
 	doc.Weight = &req.Weight
 	doc.FleetEstimation = req.FleetEstimation
 
-	if err := config.DB.Save(&doc).Error; err != nil {
+	if err := tx.Save(&doc).Error; err != nil {
+		tx.Rollback()
 		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal update dokumen", err)
 		return
 	}
+
+	summaryBag, summaryCat, totalQty, totalPrice := helpers.BuildBagSummary(doc.BagProducts)
+	pdfBytes, err := helpers.PdfGenerator("html/cargo_online.html", map[string]interface{}{
+		"Doc":               doc,
+		"SummaryBags":       summaryBag,
+		"SummaryCategories": summaryCat,
+		"TotalQty":          totalQty,
+		"TotalOldPrice":     totalPrice,
+		"Volume":            *doc.Length * *doc.Width * *doc.Height,
+	})
+	if err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal generate PDF", err)
+		return
+	}
+
+	filename := fmt.Sprintf("cargo-online-%d.pdf", doc.ID)
+	if err := os.WriteFile("./public/bulky_pdf/"+filename, pdfBytes, 0644); err != nil {
+		tx.Rollback()
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal simpan PDF", err)
+		return
+	}
+
+	//commit
+	if err := tx.Commit().Error; err != nil {
+        tx.Rollback()
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed commit", "detail": err.Error()})
+        return
+    }
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -365,53 +421,36 @@ func SetOnlineReady(c *gin.Context) {
 func ConfirmSaleBulky(c *gin.Context) {
 	docID := c.Param("doc_id")
 	type payloadRequest struct {
-		BuyerID       uint    `json:"buyer_id" binding:"required"`
-		DiscountBulky float64 `json:"discount_bulky" binding:"required,gte=0,lte=100"`
+		BuyerID       *uint    `json:"buyer_id"`
+		DiscountBulky *float64 `json:"discount_bulky"`
 	}
 	
 	var req payloadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-
-		ve, ok := err.(validator.ValidationErrors)
-		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"message": "Format JSON tidak valid",
-			})
-			return
-		}
-
-		errorsMap := make(map[string]string)
-		for _, e := range ve {
-			field := e.Field()
-
-			switch field {
-			case "BuyerID":
-				errorsMap["buyer_id"] = "Buyer ID wajib diisi"
-			case "DiscountBulky":
-				errorsMap["discount_bulky"] = "Discount Bulky wajib diisi"
-
-			default:
-				errorsMap[strings.ToLower(field)] =
-					"Validasi gagal pada field " + field
-			}
-		}
-
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"success": false,
-			"message": "Validasi gagal",
-			"errors": errorsMap,
-		})
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Format JSON tidak valid", err)
 		return
 	}
 
 	var doc models.BulkyDocument
-
 	if err := config.DB.Preload("BulkySales").First(&doc, docID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"message": "Dokumen tidak ditemukan",
 		})
+		return
+	}
+
+	//validation for cargo offline
+	if doc.TypeBulky == "offline" && req.DiscountBulky == nil  {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Gagal: Diskon wajib diisi untuk cargo offline", nil)
+		return
+	}
+	if req.DiscountBulky != nil && (*req.DiscountBulky < 0 || *req.DiscountBulky > 100) {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Gagal: Diskon harus antara 0 dan 100", nil)
+		return
+	}
+	if doc.TypeBulky == "offline" && req.BuyerID == nil  {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Gagal: Buyer ID wajib diisi untuk cargo offline", nil)
 		return
 	}
 
@@ -444,7 +483,7 @@ func ConfirmSaleBulky(c *gin.Context) {
 
 	// cek buyer
 	var buyer models.Buyer
-	if err := config.DB.First(&buyer, req.BuyerID).Error; err != nil {
+	if err := config.DB.First(&buyer, *req.BuyerID).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Buyer tidak ditemukan",
@@ -455,38 +494,31 @@ func ConfirmSaleBulky(c *gin.Context) {
 	err := config.DB.Transaction(func(tx *gorm.DB) error {
 
 		var totalAfterPrice float64
-
-		for _, item := range doc.BulkySales {
-
-			newPrice := item.ProductOldPrice - (item.ProductOldPrice * req.DiscountBulky / 100)
-
-			if err := tx.Model(&models.BulkySale{}).
-				Where("id = ?", item.ID).
-				Update("after_price_bulky_sale", newPrice).Error; err != nil {
-				return err
+		// update document
+		updateDocument := map[string]interface{}{
+			"is_sale":           "sale",
+		}
+		if doc.TypeBulky == "offline" {
+			for _, item := range doc.BulkySales {
+				newPrice := item.ProductOldPrice - (item.ProductOldPrice * *req.DiscountBulky / 100)
+				if err := tx.Model(&models.BulkySale{}).
+					Where("id = ?", item.ID).
+					Update("after_price_bulky_sale", newPrice).Error; err != nil {
+					return err
+				}
+				totalAfterPrice += newPrice
 			}
 
-			totalAfterPrice += newPrice
+			updateDocument["buyer_id"] = buyer.ID
+			updateDocument["name_buyer"] = buyer.NameBuyer
+			updateDocument["discount_bulky"] = *req.DiscountBulky
+			updateDocument["after_price_bulky"] = totalAfterPrice
 		}
 
-		// update document
 		if err := tx.Model(&doc).
-			Updates(map[string]interface{}{
-				"is_sale":           "sale",
-				"buyer_id":          buyer.ID,
-				"name_buyer":        buyer.NameBuyer,
-				"discount_bulky":    req.DiscountBulky,
-				"after_price_bulky": totalAfterPrice,
-			}).Error; err != nil {
+			Updates(updateDocument).Error; err != nil {
 			return err
 		}
-
-		doc.AfterPriceBulky = totalAfterPrice
-		doc.DiscountBulky = req.DiscountBulky
-		doc.IsSale = "sale"
-		doc.BuyerID = &buyer.ID
-		doc.NameBuyer = &buyer.NameBuyer
-
 		return nil
 	})
 
@@ -756,7 +788,7 @@ func ShowBagProductDetail(c *gin.Context) {
 }
 func CreateBulkyDocument(c *gin.Context) {
 	type payloadRequest struct {
-		DiscountBulky float64 `json:"discount_bulky"`
+		DiscountBulky float64 `json:"discount_bulky" binding:"required_if=Type online,omitempty,gte=0,lte=100"`
 		BuyerID       *uint64 `json:"buyer_id"`
 		NameDocument  string  `json:"name_document" binding:"required"`
 		Type		  string  `json:"type" binding:"required,oneof=offline online"`
@@ -781,6 +813,12 @@ func CreateBulkyDocument(c *gin.Context) {
 			field := strings.ToLower(e.Field())
 
 			switch field {
+				case "discountbulky":
+					if e.Tag() == "required_if" {
+						errors["discount_bulky"] = "Diskon wajib diisi jika tipe adalah online"
+					}else {
+						errors["discount_bulky"] = "Diskon harus lebih besar dari 0 dan kurang dari 100"
+					}
 				case "namedocument":
 					if e.Tag() == "required" {
 						errors["name_document"] = "Nama dokumen wajib diisi"
@@ -2327,10 +2365,13 @@ func ProductsCargo(c *gin.Context) {
 		return
 	}
 
-	config.DB.Model(&models.BagProduct{}).
+	if err := config.DB.Model(&models.BagProduct{}).
 		Select("type, category_bag").
 		Where("user_id = ? AND bulky_document_id = ? AND status = 'proses'",user.ID, doc_id).
-		First(&activeBag)
+		First(&activeBag).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Bag status proses tidak ditemukan. Silahkan buat bag terlebih dahulu!", err)
+		return
+	}
 
 	type productCargo struct {
 		Barcode     string    `json:"barcode"`
@@ -2516,7 +2557,99 @@ func ProductsCargo(c *gin.Context) {
 		},
 	})
 }
+//bulky-resource
+func GetWaitingCargoOnline(c *gin.Context) {
+	var waitingCargo []models.BulkyDocument
+	if err := config.DB.Where("status_bulky = ?", "selesai").
+		Where("type_bulky = ?", "online").
+		Where("is_sale = ?", "ready").
+		Find(&waitingCargo).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengambil data bulky document", err)
+		return
+	}
 
+	var waitingCargoResponse []gin.H
+	for _, cargo := range waitingCargo {
+		waitingCargoResponse = append(waitingCargoResponse, gin.H{
+			"id":          			cargo.ID,
+			"name_document":       	cargo.NameDocument,
+			"old_price":  			cargo.TotalOldPrice,
+			"dimenstion": gin.H{
+				"length":  *cargo.Length,
+				"width":   *cargo.Width,
+				"height":  *cargo.Height,
+				"weight":  *cargo.Weight,
+			},
+			"volume": float64(*cargo.Length) * float64(*cargo.Width) * float64(*cargo.Height),
+			"pdf_url": fmt.Sprintf("%s/api/cargo-online/%d/pdf", os.Getenv("APP_URL"), cargo.ID),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"message": "List data waiting cargo online",
+		"resource": waitingCargoResponse,
+	})
+}
+
+func GetPDFBuffer(c *gin.Context) {
+	id := c.Param("id")
+
+	fileName := fmt.Sprintf("cargo-online-%s.pdf", id)
+	filePath := filepath.Join("./public/bulky_pdf/", fileName)
+	
+	// cek apakah file sudah ada
+	if _, err := os.Stat(filePath); err == nil {
+		// file ada -> langsung kirim
+		c.File(filePath)
+		return
+	}
+
+	if err := os.MkdirAll("./public/bulky_pdf", 0755); err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal membuat direktori untuk menyimpan file PDF", err)
+		return
+	}
+
+	// jika file belum ada -> generate baru
+	var doc models.BulkyDocument
+	if err := config.DB.Preload("BagProducts.BulkySales").
+		Where("id = ? AND type_bulky = ? AND is_sale = ?", id, "online", "ready").
+		First(&doc).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengambil data bulky document untuk generate PDF", err)
+		return
+	}
+
+	summaryBag, summaryCat, totalQty, totalPrice := helpers.BuildBagSummary(doc.BagProducts)
+
+	pdfBytes, err := helpers.PdfGenerator("html/cargo_online.html", map[string]interface{}{
+		"Doc":               doc,
+		"SummaryBags":       summaryBag,
+		"SummaryCategories": summaryCat,
+		"TotalQty":          totalQty,
+		"TotalOldPrice":     totalPrice,
+		"Volume":            *doc.Length * *doc.Width * *doc.Height,
+	})
+	
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal generate file PDF", err)
+		return
+	}
+
+	// simpan file
+	err = os.WriteFile(filePath, pdfBytes, 0644)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal menyimpan file PDF", err)
+		return
+	}
+
+	// kirim file
+	c.Data(200, "application/pdf", pdfBytes)
+}
+ 
+
+//=====================================
+// Helper
+//====================================
 // ====================== Import Product
 type importResult struct {
 	TotalFound        int

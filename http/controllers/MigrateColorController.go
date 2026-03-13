@@ -1074,6 +1074,8 @@ func ColorStockStatistics(c *gin.Context) {
 	var (
 		grandTotalStickerQty int64
 		grandTotalStickerValue float64
+		grandTotalBklStickerQty int64
+		grandTotalBklStickerValue float64
 		grandTotalOlseraQty int64
 		grandTotalOlseraValue float64
 	)
@@ -1109,6 +1111,38 @@ func ColorStockStatistics(c *gin.Context) {
 		}
 		grandTotalStickerQty += item.Qty
 		grandTotalStickerValue += item.TotalValue
+	}
+
+	var bklProduct []colorStatistic
+	if err := config.DB.Table("bkl_products bk").
+		Select(`
+			LOWER(ct.name_color) as color,
+			COUNT(*) as qty,
+			COALESCE(SUM(bk.price), 0) as total_value
+		`).
+		Joins("JOIN color_tags ct ON ct.id = bk.tag_color_id").
+		Where("bk.category_id IS NULL").
+		Where("bk.tag_color_id IS NOT NULL").
+		Where("bk.is_so IS NULL").
+		Where("bk.status IN ?", []string{"display", "expired", "slow_moving"}).
+		Where("bk.quality = ?", "lolos").
+		Where("bk.warehouse_type IS NULL OR bk.warehouse_type IN ?", []string{"type1", "type2"}).
+		Group("color").
+		Scan(&bklProduct).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal query data color bkl product", err)
+		return
+	}
+
+	productBklSticker := make(map[string]map[string]float64)
+	for _, item := range bklProduct {
+		color := strings.ToLower(item.Color) // biar konsisten
+
+		productBklSticker[color] = map[string]float64{
+			"qty":         float64(item.Qty),
+			"total_value": item.TotalValue,
+		}
+		grandTotalBklStickerQty += item.Qty
+		grandTotalBklStickerValue += item.TotalValue
 	}
 
 	//Olsera stock
@@ -1254,6 +1288,11 @@ func ColorStockStatistics(c *gin.Context) {
 				"grand_total_qty": grandTotalStickerQty,
 				"grand_total_value": grandTotalStickerValue,
 				"detail_per_colors": productSticker,
+			},
+			"product_bkl_sticker": gin.H{
+				"grand_total_qty": grandTotalBklStickerQty,
+				"grand_total_value": grandTotalBklStickerValue,
+				"detail_per_colors": productBklSticker,
 			},
 			"olsera_stock": gin.H{
 				"grand_total_qty": grandTotalOlseraQty,

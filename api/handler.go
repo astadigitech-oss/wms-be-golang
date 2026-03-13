@@ -384,7 +384,12 @@ func RouteHandler(r *gin.Engine) {
 			rg.POST("/b2b-documents/so", controllers.SoB2BDocument) //SOController.go
 		})
 		
-		//TOOL
+		//TOOL Olsera
 		protected.POST("olsera/sync-token", controllers.SyncOlseraToken) //MigrateColorController.go
+		//=======================================================
+		// Bulky
+		//=======================================================
+		protected.GET("cargo-online/waiting-upload", controllers.GetWaitingCargoOnline) //BulkyController.go
+		protected.GET("cargo-online/:id/pdf", controllers.GetPDFBuffer) //BulkyController.go
 	}
 }

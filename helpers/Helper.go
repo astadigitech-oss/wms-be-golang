@@ -1,10 +1,12 @@
 package helpers
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	crand "crypto/rand"
 	"database/sql"
+	"html/template"
 	"io"
 	"liquid8/wms/config"
 	"liquid8/wms/models"
@@ -29,6 +31,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"github.com/SebastiaanKlippert/go-wkhtmltopdf"
 )
 
 
@@ -1280,7 +1283,6 @@ func CalculateCurrentBalance() (int64, float64, error) {
     return totalAllProduct, totalAllPrice, nil
 }
 
-
 func HumanizeNumber(n float64) string {
     s := fmt.Sprintf("%.0f", n)
     nStr := ""
@@ -1502,4 +1504,113 @@ func Decrypt(cryptoText string) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+//=================== PDF Generator ======================
+func funcMap() template.FuncMap {
+
+	return template.FuncMap{
+
+		"add": func(a, b int) int {
+			return a + b
+		},
+
+		"numberFormat": HumanizeNumber,
+	}
+}
+func PdfGenerator(templatePath string, data interface{}) ([]byte, error) {
+	tmpl := template.Must(
+		template.New("cargo_online.html").
+		Funcs(funcMap()).
+		ParseFiles(templatePath),
+	)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	var html bytes.Buffer
+
+	err := tmpl.Execute(&html, data)
+	if err != nil {
+		return nil, err
+	}
+
+	pdfg, err := wkhtmltopdf.NewPDFGenerator()
+	if err != nil {
+		return nil, err
+	}
+
+	page := wkhtmltopdf.NewPageReader(bytes.NewReader(html.Bytes()))
+	pdfg.AddPage(page)
+
+	err = pdfg.Create()
+	if err != nil {
+		return nil, err
+	}
+
+	return pdfg.Bytes(), nil
+}
+func BuildBagSummary(bags []models.BagProduct) ([]interface{}, []interface{}, int64, float64) {
+
+	bagMap := map[uint64]map[string]interface{}{}
+	catMap := map[string]map[string]interface{}{}
+
+
+	totalQty := int64(0)
+	totalPrice := float64(0)
+
+	for _, bag := range bags {
+		for _, item := range bag.BulkySales {
+			qty := item.ProductQuantity
+			if qty == 0 {
+				qty = 1
+			}
+
+			// BAG SUMMARY
+			if _, ok := bagMap[item.BagProductID]; !ok {
+				bagMap[item.BagProductID] = map[string]interface{}{
+					"barcode": bag.BarcodeBag,
+					"name":    bag.NameBag,
+					"qty": int64(0),
+					"price": float64(0),
+				}
+			}
+
+			bagMap[item.BagProductID]["qty"] = bagMap[item.BagProductID]["qty"].(int64) + qty
+			bagMap[item.BagProductID]["price"] = bagMap[item.BagProductID]["price"].(float64) + item.ProductOldPrice
+
+			// CATEGORY SUMMARY
+			cat := item.ProductCategory
+			if cat == "" {
+				cat = "Uncategorized"
+			}
+
+			if _, ok := catMap[cat]; !ok {
+				catMap[cat] = map[string]interface{}{
+					"name": cat,
+					"qty": int64(0),
+					"price": float64(0),
+				}
+			}
+
+			catMap[cat]["qty"] = catMap[cat]["qty"].(int64) + qty
+			catMap[cat]["price"] = catMap[cat]["price"].(float64) + item.ProductOldPrice
+
+			totalQty += qty
+			totalPrice += item.ProductOldPrice
+		}
+	}
+
+	// convert map -> slice
+	var summaryBag []interface{}
+	for _, v := range bagMap {
+		summaryBag = append(summaryBag, v)
+	}
+
+	var categories []interface{}
+	for _, v := range catMap {
+		categories = append(categories, v)
+	}
+
+	return summaryBag, categories, totalQty, totalPrice
 }

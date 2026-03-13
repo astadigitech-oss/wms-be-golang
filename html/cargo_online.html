@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Packing List - {{ .Doc.NameDocument }}</title>
+
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-size: 11px;
+            color: #333;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        .header h2 {
+            margin: 0;
+            text-transform: uppercase;
+        }
+
+        .header p {
+            margin: 5px 0 0 0;
+            font-size: 10px;
+            color: #777;
+        }
+
+        .info-table {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .info-table td {
+            vertical-align: top;
+            padding: 3px 0;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            margin-top: 20px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 4px;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .items-table th,
+        .items-table td {
+            border: 1px solid #ddd;
+            padding: 6px;
+            text-align: left;
+        }
+
+        .items-table th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+            font-size: 10px;
+        }
+
+        .items-table .text-right {
+            text-align: right;
+        }
+
+        .items-table .text-center {
+            text-align: center;
+        }
+
+        .footer {
+            margin-top: 30px;
+            width: 100%;
+        }
+
+        .signature-box {
+            width: 200px;
+            float: right;
+            text-align: center;
+        }
+
+        .signature-space {
+            height: 80px;
+        }
+
+        .clear {
+            clear: both;
+        }
+
+        .page-break {
+            page-break-inside: avoid;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header">
+        <h2>PACKING LIST - CARGO ONLINE</h2>
+        <p>Dokumen Resmi Gudang B2B</p>
+    </div>
+
+    <table class="info-table">
+        <tr>
+            <td width="15%"><strong>No. Dokumen</strong></td>
+            <td width="35%">: {{ .Doc.NameDocument }}</td>
+            <td width="15%"><strong>Panjang</strong></td>
+            <td width="35%">: {{ .Doc.Length }} cm</td>
+        </tr>
+
+        <tr>
+            <td><strong>Tanggal</strong></td>
+            <td>: {{ .Doc.CreatedAt }}</td>
+            <td><strong>Lebar</strong></td>
+            <td>: {{ .Doc.Width }} cm</td>
+        </tr>
+
+        <tr>
+            <td><strong>Admin/User</strong></td>
+            <td>: {{ .Doc.NameUser }}</td>
+            <td><strong>Tinggi</strong></td>
+            <td>: {{ .Doc.Height }} cm</td>
+        </tr>
+
+        <tr>
+            <td><strong>Tipe Kargo</strong></td>
+            <td>: {{ .Doc.TypeBulky }}</td>
+            <td><strong>Berat (Weight)</strong></td>
+            <td>: {{ .Doc.Weight }} Kg</td>
+        </tr>
+
+        <tr>
+            <td><strong>Status</strong></td>
+            <td>: READY (Siap Dijual)</td>
+            <td><strong>Volume</strong></td>
+            <td>: {{ .Volume }} cm³</td>
+        </tr>
+    </table>
+
+
+    <div class="page-break">
+
+        <div class="section-title">Summary Bag</div>
+
+        <table class="items-table">
+
+            <thead>
+                <tr>
+                    <th class="text-center" width="5%">NO</th>
+                    <th width="30%">Barcode</th>
+                    <th width="30%">Name Bag</th>
+                    <th class="text-center" width="15%">Count of Barcode</th>
+                    <th class="text-right" width="20%">Sum of Old Price</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+                {{ range $i, $bag := .SummaryBags }}
+
+                <tr>
+                    <td class="text-center">{{ add $i 1 }}</td>
+                    <td>{{ index $bag "barcode" }}</td>
+                    <td>{{ index $bag "name" }}</td>
+                    <td class="text-center">{{ index $bag "qty" }}</td>
+                    <td class="text-right">Rp {{ numberFormat (index $bag "price") }}</td>
+                </tr>
+
+                {{ end }}
+
+            </tbody>
+
+            <tfoot>
+                <tr>
+                    <th colspan="3" class="text-right">Grand Total</th>
+                    <th class="text-center">{{ .TotalQty }}</th>
+                    <th class="text-right">Rp {{numberFormat .TotalOldPrice }}</th>
+                </tr>
+            </tfoot>
+
+        </table>
+    </div>
+
+
+    <div class="page-break">
+
+        <div class="section-title">Summary Category</div>
+
+        <table class="items-table">
+
+            <thead>
+                <tr>
+                    <th width="50%">CATEGORY</th>
+                    <th class="text-center" width="25%">Count of Barcode</th>
+                    <th class="text-right" width="25%">Sum of Old Price</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+                {{ range $i, $cat := .SummaryCategories }}
+
+                <tr>
+                    <td>{{ index $cat "name" }}</td>
+                    <td class="text-center">{{ index $cat "qty" }}</td>
+                    <td class="text-right">Rp {{ numberFormat (index $cat "price") }}</td>
+                </tr>
+
+                {{ end }}
+
+            </tbody>
+
+            <tfoot>
+                <tr>
+                    <th class="text-right">Grand Total</th>
+                    <th class="text-center">{{ .TotalQty }}</th>
+                    <th class="text-right">Rp {{ numberFormat .TotalOldPrice }}</th>
+                </tr>
+            </tfoot>
+
+        </table>
+    </div>
+
+
+
+    <div class="page-break">
+
+        <div class="section-title">List Products</div>
+
+        <table class="items-table">
+
+            <thead>
+                <tr>
+                    <th class="text-center" width="5%">No</th>
+                    <th width="15%">Barcode Bulky Sale</th>
+                    <th width="30%">Name Product Bulky Sale</th>
+                    <th class="text-center" width="5%">QTY</th>
+                    <th class="text-right" width="15%">Old Price Bulky Sale</th>
+                    <th class="text-center" width="10%">Discount (%)</th>
+                    <th class="text-right" width="20%">Price After Discount</th>
+                </tr>
+            </thead>
+
+            <tbody>
+            
+                {{ $hasData := false }}
+            
+                {{ range $i, $bag := .Doc.BagProducts }}
+                    {{ range $j, $item := $bag.BulkySales }}
+                    {{ $hasData = true }}
+                    <tr>
+                        <td class="text-center">{{ add $j 1 }}</td>
+                        <td>
+                            {{ if $item.ProductBarcode }}
+                            {{ $item.ProductBarcode }}
+                            {{ else if $item.BundleBarcode }}
+                            {{ $item.BundleBarcode }}
+                            {{ else if $item.BklBarcode }}
+                            {{ $item.BklBarcode }}
+                            {{ else }}
+                            Barcode undefined
+                            {{ end }}
+                        </td>
+                        <td>{{ $item.ProductName }}</td>
+                        <td class="text-center">{{ $item.ProductQuantity }}</td>
+                        <td class="text-right">{{ numberFormat $item.ProductOldPrice }}</td>
+                        <td class="text-center">{{ $.Doc.DiscountBulky }}%</td>
+                        <td class="text-right">Rp {{ numberFormat $item.AfterPriceBulkySale }}</td>
+                    </tr>
+                    {{ end }}
+                {{ end }}
+            
+                {{ if not $hasData }}
+                <tr>
+                    <td colspan="7" class="text-center">
+                        <em>Tidak ada data produk.</em>
+                    </td>
+                </tr>
+                {{ end }}
+            
+            </tbody>
+
+            <tfoot>
+                <tr>
+                    <th colspan="3" class="text-right">Grand Total</th>
+                    <th class="text-center">{{ .Doc.TotalProduct }}</th>
+                    <th class="text-right">Rp {{ numberFormat .Doc.TotalOldPrice }}</th>
+                    <th class="text-center"></th>
+                    <th class="text-right">Rp {{ numberFormat .Doc.AfterPriceBulky }}</th>
+                </tr>
+            </tfoot>
+
+        </table>
+
+    </div>
+
+
+    <div class="footer">
+
+        <div class="signature-box">
+            <p>Disiapkan Oleh,</p>
+
+            <div class="signature-space"></div>
+
+            <p><strong>{{ .Doc.NameUser }}</strong></p>
+
+            <p style="font-size: 10px; margin-top: -10px;">
+                (Admin Gudang)
+            </p>
+
+        </div>
+
+        <div class="clear"></div>
+
+    </div>
+
+</body>
+
+</html>
