@@ -110,6 +110,7 @@ func GetSummaryBulkySales(c *gin.Context) {
 	type summaryDetail struct {
 		Qty        int64   `json:"qty"`
 		TotalPrice float64 `json:"total_price"`
+		TotalOldPrice float64 `json:"total_old_price"`
 	}
 
 	type summaryResult struct {
@@ -122,11 +123,17 @@ func GetSummaryBulkySales(c *gin.Context) {
 		TypeBulky string	`json:"type"`
 		Qty	   int64	`json:"qty"`
 		TotalPrice float64 `json:"total_price"`
+		TotalOldPrice float64 `json:"total_old_price"`
 	}
 
 	var rows []summaryRow
 	if err := config.DB.Table("bulky_documents").
-		Select(`type_bulky, SUM(total_product) as qty, SUM(after_price_bulky) as total_price`).
+		Select(`
+			type_bulky, 
+			SUM(total_product) as qty, 
+			SUM(after_price_bulky) as total_price,
+			SUM(total_old_price) as total_old_price
+		`).
 		Where("is_sale = ?", "sale").
 		Where("type_bulky IS NOT NULL").
 		Group("type_bulky").
@@ -143,11 +150,13 @@ func GetSummaryBulkySales(c *gin.Context) {
 			result.CargoOffline = summaryDetail{
 				Qty:        row.Qty,
 				TotalPrice: row.TotalPrice,
+				TotalOldPrice: row.TotalOldPrice,
 			}
 		case "online":
 			result.CargoOnline = summaryDetail{
 				Qty:        row.Qty,
 				TotalPrice: row.TotalPrice,
+				TotalOldPrice: row.TotalOldPrice,
 			}
 		}
 	}
@@ -156,6 +165,7 @@ func GetSummaryBulkySales(c *gin.Context) {
 	result.Akumulasi = summaryDetail{
 		Qty:        result.CargoOffline.Qty + result.CargoOnline.Qty,
 		TotalPrice: result.CargoOffline.TotalPrice + result.CargoOnline.TotalPrice,
+		TotalOldPrice: result.CargoOffline.TotalOldPrice + result.CargoOnline.TotalOldPrice,
 	}
 
 	c.JSON(200, gin.H{
