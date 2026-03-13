@@ -398,6 +398,7 @@ func AddProductManual(c *gin.Context) {
         Quality         string  `json:"quality" binding:"required,oneof=lolos damaged abnormal"`
         CategoryID      *uint64    `json:"category_id" binding:"omitempty,gt=0"`
         TagColorID      *uint64    `json:"tag_color_id" binding:"omitempty,gt=0"`
+        IsExtraProduct      *bool    `json:"is_extra_product"`
         Description     *string  `json:"description" binding:"omitempty"`
     }
 
@@ -459,6 +460,11 @@ func AddProductManual(c *gin.Context) {
         status = "staging"
     }
 
+    is_extra_product := false
+    if payload.IsExtraProduct != nil {
+        is_extra_product = true
+    }
+
     // Persiapkan Data Produk Baru
 	newProduct := models.Product{
         InboundType:        "manual-inbound",
@@ -474,6 +480,7 @@ func AddProductManual(c *gin.Context) {
 		Status:             "display",
 		Quality:            payload.Quality,
         LocationType:       &status,
+        IsExtraProduct:     is_extra_product,
 	}
 
 
