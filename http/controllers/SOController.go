@@ -1361,23 +1361,36 @@ func SoScanInDisplayRack(c *gin.Context) {
 	}
 
 	// =============================
-	// CARI PRODUCT (1 TABLE SAJA)
+	// CARI PRODUCT
 	// =============================
 	var product models.Product
+	var bundle models.Bundle
+	isBundle := false
 	err := tx.Preload("Category").
 		Where("barcode = ? OR old_barcode_product = ?", req.Barcode, req.Barcode).
 		First(&product).Error
 
 	if err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusNotFound, gin.H{"status": false, "message": "Produk tidak ditemukan"})
-		return
+		errBundle := tx.Preload("Category").
+			Where("barcode = ?", req.Barcode).
+			First(&bundle).Error
+
+		if errBundle != nil {
+			tx.Rollback()
+			c.JSON(404, gin.H{
+				"status": false,
+				"message": "Produk / Bundle tidak ditemukan dengan barcode " + req.Barcode,
+			})
+			return
+		}
+
+		isBundle = true
 	}
 
 	// =============================
 	// VALIDASI PRODUCT
 	// =============================
-	if product.IsSo != nil && *product.IsSo == "done" && product.RackID != nil && *product.RackID == uint64(rack.ID) {
+	if !isBundle && product.IsSo != nil && *product.IsSo == "done" && product.RackID != nil && *product.RackID == uint64(rack.ID) {
 		tx.Rollback()
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"status":  false,
@@ -1385,12 +1398,28 @@ func SoScanInDisplayRack(c *gin.Context) {
 		})
 		return
 	}
+	if isBundle && bundle.IsSo != nil && *bundle.IsSo == "done" && bundle.RackID != nil && *bundle.RackID == uint64(rack.ID) {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Bundle sudah di rack ini dan SO done",
+		})
+		return
+	}
 
-	if product.TagColorID != nil {
+	if !isBundle && product.TagColorID != nil {
 		tx.Rollback()
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"status":  false,
 			"message": "Gagal: Produk ini terdeteksi sebagai produk color tidak bisa masuk rack",
+		})
+		return
+	}
+	if  isBundle && bundle.TagColorID != nil {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": "Gagal: Bundle ini terdeteksi sebagai Bundle color tidak bisa masuk rack",
 		})
 		return
 	}
@@ -1403,7 +1432,7 @@ func SoScanInDisplayRack(c *gin.Context) {
 		"scrap_qcd": true,
 	}
 
-	if forbidden[product.Status] {
+	if !isBundle && forbidden[product.Status] {
 		tx.Rollback()
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"status":  false,
@@ -1411,8 +1440,16 @@ func SoScanInDisplayRack(c *gin.Context) {
 		})
 		return
 	}
+	if isBundle && bundle.Status == "sale" {
+		tx.Rollback()
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  false,
+			"message": fmt.Sprintf("Status bundle %s, tidak diperbolehkan masuk rack", bundle.Status),
+		})
+		return
+	}
 
-	if product.Quality != "lolos" {
+	if !isBundle && product.Quality != "lolos" {
 		tx.Rollback()
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"status":  false,
@@ -1444,7 +1481,11 @@ func SoScanInDisplayRack(c *gin.Context) {
 			continue
 		}
 
-		if strings.Contains(product.Category.NameCategory, keyword) {
+		if !isBundle && strings.Contains(product.Category.NameCategory, keyword) {
+			categoryMatch = true
+			break
+		}
+		if isBundle && strings.Contains(bundle.Category.NameCategory, keyword) {
 			categoryMatch = true
 			break
 		}
@@ -1463,20 +1504,35 @@ func SoScanInDisplayRack(c *gin.Context) {
 	// UPDATE PRODUCT (NO COPY TABLE)
 	// =============================
 	var oldRackID uint64
-	if product.RackID != nil {
+	if !isBundle && product.RackID != nil {
 		oldRackID = *product.RackID
+	}
+	if isBundle && bundle.RackID != nil {
+		oldRackID = *bundle.RackID
 	}
 	targetRack := uint64(rack.ID)
 
-	if err := tx.Model(&product).Updates(map[string]interface{}{
-		"rack_id": targetRack,
-		"is_so": "done",
-		"user_so": user.ID,
-		"location_type": "main",
-	}).Error; err != nil {
-		tx.Rollback()
-		helpers.ErrorResponse(c, 500, "Internal Server Error", err)
-		return
+	if isBundle {
+		if err := tx.Model(&bundle).Updates(map[string]interface{}{
+			"rack_id": targetRack,
+			"is_so": "done",
+			"user_so": user.ID,
+		}).Error; err != nil {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+			return
+		}
+	} else {
+		if err := tx.Model(&product).Updates(map[string]interface{}{
+			"rack_id": targetRack,
+			"is_so": "done",
+			"user_so": user.ID,
+			"location_type": "main",
+		}).Error; err != nil {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+			return
+		}
 	}
 
 	// =============================
@@ -1503,11 +1559,21 @@ func SoScanInDisplayRack(c *gin.Context) {
 	if *product.LocationType == "staging" {
 		sourceType = "staging"
 	}
+	product_name := ""
+	barcode := ""
+	if isBundle {
+		product_name = bundle.NameBundle
+		barcode = bundle.Barcode
+	} else {
+		product_name = product.Name
+		barcode = product.Barcode
+	}
+	
 	tx.Create(&models.RackHistory{
 		UserID:    uint64(user.ID),
 		RackID:    targetRack,
-		Barcode:   product.Barcode,
-		ProductName: &product.Name,
+		Barcode:   barcode,
+		ProductName: &product_name,
 		Action:    "IN",
 		Source:    &sourceType,
 	})
