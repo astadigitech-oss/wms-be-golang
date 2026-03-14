@@ -166,7 +166,7 @@ func RouteHandler(r *gin.Engine) {
 		roleGroup(protected, []string{"Admin", "Spv", "Team leader", "Crew"}, func(rg *gin.RouterGroup) {
 			//Moving Product -> bundle
 			rg.GET("/bundles", controllers.GetBundles) //BundleController.go
-			rg.GET("/bundle/product-type-colors", controllers.GetProductTypeColor) //BundleController.go
+			rg.GET("/bundle/list-product", controllers.GetProductBundle) //BundleController.go
 			rg.GET("/bundle/filter-product", controllers.GetBundleFilterProduct) //BundleController.go
 			rg.GET("/bundles/:bundle_id/detail", controllers.GetBundleDetail) //BundleController.go 
 			rg.POST("/bundle/:bundle_id/product-bundle/:product_id", controllers.AddProductBundle) //BundleController.go 

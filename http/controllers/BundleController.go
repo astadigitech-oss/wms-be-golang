@@ -79,8 +79,7 @@ func GetBundles(c *gin.Context) {
 		},
 	})
 }
-
-func GetProductTypeColor(c *gin.Context) {
+func GetProductBundle(c *gin.Context) {
     q := strings.TrimSpace(c.Query("q"))
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -90,33 +89,94 @@ func GetProductTypeColor(c *gin.Context) {
 	limit := 50
 	offset := (page - 1) * limit
 
-	//inisialisasi query
-	baseQuery := config.DB.Model(&models.Product{}).
-        Joins("LEFT JOIN color_tags ON color_tags.id = products.tag_color_id").
-        Where("products.status IN ?", []string{"display", "expired"}).
-        Where("products.location_type = ?", "main").
-        Where("products.category_id IS NULL").
-        Where("products.tag_color_id IS NOT NULL").
-        Where("products.quality = ?", "lolos").
-        Where("(products.warehouse_type IS NULL OR products.warehouse_type = 'type1')")
+	//searching
+	search := ""
+	args := []interface{}{}
 
-	// Searching (misalnya, mencari berdasarkan nama atau email)
 	if q != "" {
 		searchPattern := "%" + q + "%"
-		baseQuery = baseQuery.Where("(products.barcode LIKE ? OR "+
-            "products.old_barcode_product LIKE ? OR " + 
-            "products.name LIKE ? OR " + 
-            "products.code_document LIKE ?)", searchPattern, searchPattern, searchPattern, searchPattern)
+		search = ` AND (
+			t.barcode LIKE ? OR
+			t.old_barcode_product LIKE ? OR
+			t.name LIKE ? OR
+			t.code_document LIKE ?
+		)`
+
+		args = append(args, searchPattern, searchPattern, searchPattern, searchPattern)
 	}
+
+	//inisialisasi query
+	// Query untuk product main dengan color
+	queryColor := `
+		SELECT
+			p.id,
+			'display' AS source,
+			p.old_barcode_product AS old_barcode,
+			p.barcode AS new_barcode,
+			p.name,
+			p.price,
+			p.old_price_product AS old_price,
+			p.status,
+			ct.name_color AS category,
+			p.created_at
+		FROM products p
+		LEFT JOIN color_tags ct ON ct.id = p.tag_color_id
+		WHERE
+			p.location_type = 'main'
+			AND p.status IN ('display','expired')
+			AND p.category_id IS NULL
+			AND p.tag_color_id IS NOT NULL
+			AND p.quality = 'lolos'
+	`
+	// Query untuk product yang categorynya di staging
+	queryCategory := `
+		SELECT
+			p.id,
+			'staging' AS source,
+			p.old_barcode_product AS old_barcode,
+			p.barcode AS new_barcode,
+			p.name,
+			p.price,
+			p.old_price_product AS old_price,
+			p.status,
+			c.name_category AS category,
+			p.created_at
+		FROM products p
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE
+			p.location_type = 'staging'
+			AND p.status IN ('display','expired')
+			AND p.category_id IS NOT NULL
+			AND p.tag_color_id IS NULL
+			AND p.quality = 'lolos'
+	`
+
+	unionQuery := fmt.Sprintf(`
+		SELECT * FROM (
+			%s
+			UNION ALL
+			%s
+		) t WHERE 1=1 %s
+		ORDER BY created_at DESC
+		LIMIT %d OFFSET %d
+	`, queryColor, queryCategory, search, limit, offset)
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (
+			%s
+			UNION ALL
+			%s
+		) t WHERE 1=1 %s
+	`, queryColor, queryCategory, search)
 
     // Paginate Data
     type productsData struct {
         ID          uint64  `json:"id"`
+        Source      string  `json:"source"`
         OldBarcode  string  `json:"old_barcode"`
-        NewBarcode     string  `json:"new_barcode"`
+        NewBarcode  string  `json:"new_barcode"`
         Name        string  `json:"name"`
         Price       float64 `json:"price"`
-        OldPrice       float64 `json:"old_price"`
+        OldPrice    float64 `json:"old_price"`
         Status      string  `json:"status"`
         Category   *string  `json:"category"`
     }
@@ -124,32 +184,25 @@ func GetProductTypeColor(c *gin.Context) {
     var products []productsData
 	var totalData int64
 
-    baseQuery.Session(&gorm.Session{}).Count(&totalData)
-
-    // Ambil data detail
-    err := baseQuery.Session(&gorm.Session{}).
-        Select(`
-            products.id, 
-            products.old_barcode_product AS old_barcode, 
-            products.barcode AS new_barcode, 
-            products.name AS name, 
-            products.price AS price, 
-            products.old_price_product AS old_price, 
-            products.status AS status, 
-            color_tags.name_color AS category
-        `).
-        Order("products.created_at DESC").
-        Limit(limit).Offset(offset).
-        Find(&products).Error
-
-    if err != nil {
-        c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
+    if err := config.DB.Raw(countQuery, args...).Scan(&totalData).Error; err != nil {
+        helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal menghitung total data", err)
+        return
+    }
+    if err := config.DB.Raw(unionQuery, args...).Scan(&products).Error; err != nil {
+        helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengambil data produk", err)
         return
     }
 
 	lastPage := int(math.Ceil(float64(totalData) / float64(limit)))
 	// pagination links
 	links := helpers.BuildPaginationLinks(c, page, lastPage)
+	from := 0
+	to := 0
+
+	if len(products) > 0 {
+		from = offset + 1
+		to = offset + len(products)
+	}
 
 	c.JSON(200, gin.H{
 		"data": gin.H{
@@ -158,17 +211,16 @@ func GetProductTypeColor(c *gin.Context) {
 			"resource": gin.H{
                 "total_data":           totalData,
                 "data":                 products,
-				"from":           offset + 1,
+				"from":           from,
 				"last_page":      lastPage,
 				"links":          links,
 				"per_page":       limit,
-				"to":             offset + len(products),
+				"to":             to,
 				"total":          totalData,
 			},
 		},
 	})
 }
-
 func GetBundleDetail(c *gin.Context) {
     bundle_id := c.Param("bundle_id")
 
@@ -225,7 +277,6 @@ func GetBundleDetail(c *gin.Context) {
 		},
 	})
 }
-
 func GetBundleFilterProduct(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
@@ -289,7 +340,7 @@ func GetBundleFilterProduct(c *gin.Context) {
 	var result []productData
 	if err := config.DB.
 		Table("bundle_items").
-		Joins("LEFT JOIN products ON products.id = bundle_items.product_id").
+		Joins("JOIN products ON products.id = bundle_items.product_id").
 		Select(`
 			bundle_items.id,
 			products.barcode AS new_barcode,
@@ -319,7 +370,6 @@ func GetBundleFilterProduct(c *gin.Context) {
 		},
 	})
 }
-
 func AddProductBundle(c *gin.Context) {
 	bundle_id := c.Param("bundle_id")
 	product_id := c.Param("product_id")
@@ -348,6 +398,10 @@ func AddProductBundle(c *gin.Context) {
         c.JSON(404, gin.H{"status": false, "message": "Bundle not found"})
         return
     }
+	if bundle.Status == "sale" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Tidak dapat menambah produk ke bundle yang sudah dijual", nil)
+		return
+	}
 
 	//cek apakah produk sudah ada
 	var exist models.BundleItem
@@ -359,10 +413,7 @@ func AddProductBundle(c *gin.Context) {
 
 	//get data product
 	var product models.Product
-    if err := tx.Where("status IN ?", []string{"display", "expired"}).
-		Where("category_id IS NULL").
-		Where("tag_color_id IS NOT NULL").
-		Where("location_type = ?", "main").
+    if err := tx.Where("status IN ?", []string{"display","expired"}).
 		First(&product, productID).Error; err != nil {
         tx.Rollback()
         c.JSON(404, gin.H{"status": false, "message": "Product not found"})
@@ -404,7 +455,6 @@ func AddProductBundle(c *gin.Context) {
 		"tag_color_id": nil,
 		"status": "draft",
 	}).Error; err != nil {
-
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  false,
@@ -445,7 +495,6 @@ func AddProductBundle(c *gin.Context) {
 		"message":  "berhasil menambah list product bundle",
 	})
 }
-
 func DeleteProductBundle(c *gin.Context) {
 	itemId := c.Param("item_id")
 
@@ -480,6 +529,10 @@ func DeleteProductBundle(c *gin.Context) {
         c.JSON(404, gin.H{"status": false, "message": "Bundle not found"})
         return
     }
+	if bundle.Status == "sale" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Tidak dapat menghapus produk dari bundle yang sudah dijual", nil)
+		return
+	}
 
 	//get data product
 	var product models.Product
@@ -488,6 +541,17 @@ func DeleteProductBundle(c *gin.Context) {
         c.JSON(404, gin.H{"status": false, "message": "Product not found"})
         return
     }
+
+	//kembalikan status product
+	if err := tx.Model(&product).Update("status", item.Status).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  false,
+			"message": "failed to update status product",
+			"error":   err.Error(),
+		})
+		return
+	}
 
 	//hapus bundle item
 	if err := tx.Delete(&item).Error; err != nil {
@@ -526,7 +590,6 @@ func DeleteProductBundle(c *gin.Context) {
 			"tag_color_id": nil,
 			"status": "draft",
 		}).Error; err != nil {
-
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  false,
@@ -535,17 +598,6 @@ func DeleteProductBundle(c *gin.Context) {
 			})
 			return
 		}
-	}
-
-	//update product status jdi bundle
-	if err := tx.Model(&product).Update("status", item.Status).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  false,
-			"message": "failed to update status product",
-			"error":   err.Error(),
-		})
-		return
 	}
 
 	//buat user log action
@@ -568,12 +620,12 @@ func DeleteProductBundle(c *gin.Context) {
 		"message":  "berhasil menghapus product dari bundle",
 	})
 }
-
 func CreateBundleProduct(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
     type payloadRequest struct {
         NameBundle string  `json:"name_bundle" binding:"required"`
+        TotalPriceCustom float64  `json:"total_price_custom" binding:"required,gte=0"`
         BundleType string  `json:"bundle_type" binding:"required,oneof=bundle"`
         CategoryID *uint64 `json:"category_id"`
         TagColorID *uint64 `json:"tag_color_id"`
@@ -595,6 +647,12 @@ func CreateBundleProduct(c *gin.Context) {
 				case "namebundle":
 					if e.Tag() == "required" {
 						errors["name_bundle"] = "Nama bundle wajib diisi"
+					}
+				case "totalpricecustom":
+					if e.Tag() == "required" {
+						errors["total_price_custom"] = "Total price custom wajib diisi"
+					}else if e.Tag() == "gte" {
+						errors["total_price_custom"] = "Total price custom harus lebih besar dari atau sama dengan 0"
 					}
 				case "bundletype":
 					if e.Tag() == "required" {
@@ -683,7 +741,7 @@ func CreateBundleProduct(c *gin.Context) {
 		UserID: &userIDValue,
 		NameBundle: payload.NameBundle,
 		TotalPrice: totalPrice,
-		TotalPriceCustom: totalPriceCustom,
+		TotalPriceCustom: payload.TotalPriceCustom,
 		TotalProduct: int64(len(bundleItems)),
 		BundleType: payload.BundleType,
 		Status: "not_sale",
@@ -710,12 +768,6 @@ func CreateBundleProduct(c *gin.Context) {
 				return
 			}
 	
-			discount := totalPrice * (float64(category.DiscountCategory)/100.0)
-			discount = math.Round(discount)
-			if discount > category.MaxPriceCategory {
-				discount = category.MaxPriceCategory
-			} 
-			bundle.TotalPriceCustom = totalPrice - discount
 			bundle.CategoryID = payload.CategoryID
 		} else {
 			bundle.CategoryID = nil
@@ -742,8 +794,6 @@ func CreateBundleProduct(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"status": false, "message": "total price bundle tidak masuk rentang color tag"})
 				return
 			}
-	
-			bundle.TotalPriceCustom = color_tag.FixedPriceColor
 			bundle.TagColorID = payload.TagColorID
 		}
 	}
@@ -809,13 +859,13 @@ func CreateBundleProduct(c *gin.Context) {
 		},
     })
 }
-
 func UpdateBundle(c *gin.Context) {
 	bundle_id := c.Param("bundle_id")
 	user := c.MustGet("auth_user").(models.User)
 
     type payloadRequest struct {
         NameBundle string  `json:"name_bundle" binding:"required"`
+        TotalPriceCustom float64 `json:"total_price_custom" binding:"required,gte=0"`
         BundleType string  `json:"bundle_type" binding:"required,oneof=bundle repair qcd"`
         CategoryID *uint64 `json:"category_id"`
         TagColorID *uint64 `json:"tag_color_id"`
@@ -836,6 +886,12 @@ func UpdateBundle(c *gin.Context) {
 				case "namebundle":
 					if e.Tag() == "required" {
 						errors["name_bundle"] = "Nama bundle wajib diisi"
+					}
+				case "totalpricecustom":
+					if e.Tag() == "required" {
+						errors["total_price_custom"] = "Total price custom wajib diisi"
+					}else if e.Tag() == "gte" {
+						errors["total_price_custom"] = "Total price custom harus lebih besar dari 0"
 					}
 				case "bundletype":
 					if e.Tag() == "required" {
@@ -878,6 +934,11 @@ func UpdateBundle(c *gin.Context) {
         return
     }
 
+	if bundle.Status == "sale" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Bundle sudah terjual, tidak bisa diupdate", nil)
+		return
+	}
+
 	var action, info_page string
 	switch payload.BundleType {
 	case "bundle":
@@ -895,7 +956,7 @@ func UpdateBundle(c *gin.Context) {
         "changes": map[string]interface{}{
             "bundle_name":        payload.NameBundle,
             "total_price":     bundle.TotalPrice,
-            "total_price_custom":     bundle.TotalPriceCustom,
+            "total_price_custom":     payload.TotalPriceCustom,
 			"category_id":	bundle.CategoryID,
 			"tag_color_id":	bundle.TagColorID,
         },
@@ -910,6 +971,7 @@ func UpdateBundle(c *gin.Context) {
 
 	updateData := map[string]interface{}{
 		"name_bundle":   payload.NameBundle,
+		"total_price_custom":   payload.TotalPriceCustom,
 		"status":   "not_sale",
 	}
 
@@ -928,17 +990,10 @@ func UpdateBundle(c *gin.Context) {
 				c.JSON(404, gin.H{"status": false, "message": "Category tidak ditemukan"})
 				return
 			}
-	
-			discount := math.Round(totalPrice * (float64(category.DiscountCategory) / 100.0))
-			if discount > category.MaxPriceCategory {
-				discount = category.MaxPriceCategory
-			}
-	
-			updateData["total_price_custom"] = totalPrice - discount
-			updateData["category_id"] = payload.CategoryID
+
+			updateData["category_id"] = category.ID
 			updateData["tag_color_id"] = nil // Force null
-			logDetails["changes"].(map[string]interface{})["total_price_custom"] = totalPrice - discount
-			logDetails["changes"].(map[string]interface{})["category_id"] = payload.CategoryID
+			logDetails["changes"].(map[string]interface{})["category_id"] = category.ID
 			logDetails["changes"].(map[string]interface{})["tag_color_id"] = nil
 		} else {
 			if payload.TagColorID == nil {
@@ -959,11 +1014,8 @@ func UpdateBundle(c *gin.Context) {
 				c.JSON(400, gin.H{"status": false, "message": "Harga tidak masuk rentang color tag"})
 				return
 			}
-	
-			updateData["total_price_custom"] = color_tag.FixedPriceColor
-			updateData["tag_color_id"] = payload.TagColorID
+			updateData["tag_color_id"] = color_tag.ID
 			updateData["category_id"] = nil // Force null
-			logDetails["changes"].(map[string]interface{})["total_price_custom"] = color_tag.FixedPriceColor
 			logDetails["changes"].(map[string]interface{})["category_id"] = nil
 			logDetails["changes"].(map[string]interface{})["tag_color_id"] = color_tag.ID
 		}
@@ -993,7 +1045,6 @@ func UpdateBundle(c *gin.Context) {
         "message":     "Bundle Berhasil diupdate",
     })
 }
-
 func BundleAddFilterProduct(c *gin.Context) {
 	id := c.Param("id")
 	user := c.MustGet("auth_user").(models.User)
@@ -1035,9 +1086,6 @@ func BundleAddFilterProduct(c *gin.Context) {
 	productID, _ := strconv.ParseUint(id, 10, 64)
     var product models.Product
     if err := config.DB.Where("status IN ?", []string{"display", "expired"}).
-		Where("location_type = ?", "main").
-		Where("category_id IS NULL").
-		Where("tag_color_id IS NOT NULL").
 		First(&product, productID).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
             c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "product tidak ditemukan"})
@@ -1117,7 +1165,6 @@ func BundleAddFilterProduct(c *gin.Context) {
 		"message":  "berhasil menambah list product bundle",
 	})
 }
-
 func BundleDeleteFilterProduct(c *gin.Context) {
 	id := c.Param("id")
 
@@ -1165,7 +1212,6 @@ func BundleDeleteFilterProduct(c *gin.Context) {
 		"message":  "berhasil hapus item dari filter",
 	})
 }
-
 func Unbundle(c *gin.Context) {
 	bundle_id := c.Param("bundle_id")
 	user := c.MustGet("auth_user").(models.User)
@@ -1226,11 +1272,15 @@ func Unbundle(c *gin.Context) {
 		})
 		return
 	}
+	if bundle.Status == "sale" {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Tidak dapat di unbundle, status bundle sudah terjual (sale)", nil)
+		return
+	}
 
 	var bundle_item []models.BundleItem
 	if err := tx.Where("bundle_id = ?", bundle.ID).Find(&bundle_item).Error; err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{"status": false, "error":err.Error()})
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengambil data item bundle", err)
 		return
 	}
 
@@ -1239,7 +1289,7 @@ func Unbundle(c *gin.Context) {
 			Where("id = ?", item.ProductID).
 			Update("status", item.Status).Error; err != nil {
 			tx.Rollback()
-			c.JSON(500, gin.H{"status": false, "error": "Gagal mengembalikan status produk"})
+			helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengembalikan status product", err)
 			return
 		}
 	}

@@ -94,7 +94,6 @@ func GetRacks(c *gin.Context) {
 		},
 	})
 }
-
 func RackDetail(c *gin.Context) {
 	rack_id := c.Param("rack_id")
 
@@ -226,7 +225,6 @@ func RackDetail(c *gin.Context) {
 		},
 	})
 }
-
 func ProductBySourceRack(c *gin.Context) {
 	rackID := strings.TrimSpace(c.Query("rack_id"))
 	source := strings.TrimSpace(c.Query("source"))
@@ -329,13 +327,13 @@ func ProductBySourceRack(c *gin.Context) {
 	if q != "" {
 		searchPattern := "%" + q + "%"
 		productQuery = productQuery.Where(
-			"(products.name LIKE ? OR products.barcode LIKE ? OR products.old_barcode_product LIKE ? OR categories.name_category LIKE ?)",
-			searchPattern, searchPattern, searchPattern, searchPattern,
+			"(products.name LIKE ? OR products.barcode LIKE ? OR products.old_barcode_product LIKE ?)",
+			searchPattern, searchPattern, searchPattern,
 		)
 
 		bundleQuery = bundleQuery.Where(
-			"(bundles.name_bundle LIKE ? OR bundles.barcode LIKE ? OR categories.name_category LIKE ?)",
-			searchPattern, searchPattern, searchPattern,
+			"(bundles.name_bundle LIKE ? OR bundles.barcode LIKE ?)",
+			searchPattern, searchPattern,
 		)
 	}
 
@@ -365,7 +363,7 @@ func ProductBySourceRack(c *gin.Context) {
     err := finalQuery.Session(&gorm.Session{}).
         Order("created_at DESC").
         Limit(limit).Offset(offset).
-        Find(&products).Error
+        Scan(&products).Error
 
     if err != nil {
         c.JSON(500, gin.H{"success": false, "message": "error", "error": err.Error()})
@@ -387,12 +385,11 @@ func ProductBySourceRack(c *gin.Context) {
 				"last_page":      lastPage,
 				"links":          links,
 				"per_page":       limit,
-				"to":             offset + int(totalData),
+				"to":             offset + len(products),
 			},
 		},
 	})
 }
-
 func AddRack(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 
@@ -507,7 +504,6 @@ func AddRack(c *gin.Context) {
 		"message": "Berhasil membuat Rak " + rack.Name,
 	})
 }
-
 func UpdateRack(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
@@ -616,7 +612,6 @@ func UpdateRack(c *gin.Context) {
 		"message": "Berhasil mengubah data Rak",
 	})
 }
-
 func AddProductToRack(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
@@ -762,19 +757,23 @@ func AddProductToRack(c *gin.Context) {
 	}
 
 	source := "display"
-	if !isBundle && *product.LocationType == "staging" {
-		source = "staging"
-	}
+	product_name := ""
+	if !isBundle {
+		product_name = product.Name
 
-	if isBundle {
+		if *product.LocationType == "staging" {
+			source = "staging"
+		}
+	}else {
+		product_name = bundle.NameBundle
 		source = "bundle"
 	}
 
 	rack_history := models.RackHistory{
 		UserID: uint64(user.ID),
 		RackID: uint64(rack.ID),
-		Barcode: product.Barcode,
-		ProductName: &product.Name,
+		Barcode: barcode,
+		ProductName: &product_name,
 		Action: "IN",
 		Source: &source,
 	}
@@ -795,7 +794,6 @@ func AddProductToRack(c *gin.Context) {
 		"message": "Berhasil menambahkan produk ke Rak " + rack.Name,
 	})
 }
-
 func RemoveProductFromRack(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
@@ -918,7 +916,6 @@ func RemoveProductFromRack(c *gin.Context) {
 		"message": "Berhasil menghapus produk dari Rak " + rack.Name,
 	})
 }
-
 func DeleteRack(c *gin.Context) {
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
 	if err != nil {
@@ -944,12 +941,19 @@ func DeleteRack(c *gin.Context) {
 		}
 	}()
 
-	// Update Rak ID Produk
+	// Update Rak ID Produk/Bundle
 	if err := tx.Model(&models.Product{}).Where("rack_id = ?", rack.ID).Updates(map[string]interface{}{
         "rack_id": nil,
     }).Error; err != nil {
         tx.Rollback()
         c.JSON(500, gin.H{"status": false, "message": "Gagal update produk", "error": err.Error()})
+        return
+    }
+	if err := tx.Model(&models.Bundle{}).Where("rack_id = ?", rack.ID).Updates(map[string]interface{}{
+        "rack_id": nil,
+    }).Error; err != nil {
+        tx.Rollback()
+        c.JSON(500, gin.H{"status": false, "message": "Gagal update Bundle", "error": err.Error()})
         return
     }
 
@@ -971,7 +975,6 @@ func DeleteRack(c *gin.Context) {
 		"message": "Berhasil menghapus Rak " + rack.Name,
 	})
 }
-
 func MoveRackToDisplay(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User)
 	rackID, err := strconv.ParseUint(c.Param("rack_id"), 10, 64)
@@ -1004,9 +1007,10 @@ func MoveRackToDisplay(c *gin.Context) {
 		return
 	}
 
+	//SO Process
 	if !rack.IsSo {
 		tx.Rollback()
-		helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s belum di so, tidak bisa pindah ke displa", rack.Name), nil);
+		helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s belum di so, tidak bisa pindah ke display", rack.Name), nil)
 		return
 	}
 
@@ -1034,9 +1038,13 @@ func MoveRackToDisplay(c *gin.Context) {
 		Where("rack_id = ?", rack.ID).
 		Count(&count)
 	if count == 0 {
-		tx.Rollback()
-		c.JSON(422, gin.H{"status": false, "message": "Rak kosong"})
-		return
+		var countBundle int64
+		tx.Model(&models.Bundle{}).Where("rack_id = ?", rack.ID).Count(&countBundle)
+		if countBundle == 0 {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 422, "Rak kosong, tidak perlu dipindahkan ke display", nil)
+			return
+		}
 	}
 
 	location := "main"
@@ -1046,6 +1054,11 @@ func MoveRackToDisplay(c *gin.Context) {
 	}).Error; err != nil {
 		tx.Rollback()
 		c.JSON(500, gin.H{"status": false, "message": "Gagal memindahkan produk", "error": err.Error()})
+		return
+	}
+	if err := tx.Model(&models.Bundle{}).Where("rack_id = ?", rack.ID).Update("rack_id = ?", rack.DisplayRackID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"status": false, "message": "Gagal memindahkan bundle", "error": err.Error()})
 		return
 	}
 
@@ -1096,7 +1109,6 @@ func MoveRackToDisplay(c *gin.Context) {
 		"message": "Berhasil memindahkan rak",
 	})
 }
-
 func GetRackInsertionStats(c *gin.Context) {
 	source := c.Query("source")
 	search := c.Query("q")
@@ -1221,7 +1233,6 @@ func GetRackInsertionStats(c *gin.Context) {
 		},
 	})
 }
-
 func ExportRackHistoryInsertation(c *gin.Context) {
 	source := c.Query("source")
 	date := c.DefaultQuery("date", time.Now().Format("2006-01-02"))
@@ -1364,7 +1375,6 @@ func ExportRackHistoryInsertation(c *gin.Context) {
 		"url":     downloadURL,
 	})
 }
-
 func ExportDataRack(c *gin.Context) {
 	source := c.Query("source")
 	// date := c.DefaultQuery("date", time.Now().Format("2006-01-02"))

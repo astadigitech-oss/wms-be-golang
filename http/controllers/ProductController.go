@@ -461,7 +461,7 @@ func AddProductManual(c *gin.Context) {
     }
 
     is_extra_product := false
-    if payload.IsExtraProduct != nil {
+    if payload.IsExtraProduct != nil && *payload.IsExtraProduct == true {
         is_extra_product = true
     }
 
@@ -1712,7 +1712,7 @@ func GetProductsByColor(c *gin.Context) {
         Where("products.tag_color_id IS NOT NULL").
         Where("products.category_id IS NULL").
         // Where("products.is_so IS NULL").
-        Where("products.status = ?", "display").
+        Where("products.status IN ?", []string{"display", "expired", "slow_moving"}).
         Where("products.location_type = ?", "main").
         Where("products.quality = ?", "lolos").
         Where("(products.warehouse_type IS NULL OR products.warehouse_type = 'type1')")
