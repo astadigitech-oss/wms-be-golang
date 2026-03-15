@@ -745,6 +745,7 @@ func StaggingProduct(c *gin.Context) {
         Status      string    `json:"status"`
         DisplayPrice float64   `json:"display_price"`
         Quantity    int       `json:"quantity"`
+        IsSo      string    `json:"is_so"`
         Category    string    `json:"category"` // Harus sesuai dengan alias SELECT
         CreatedAt   string    `json:"created_at"` // Harus sesuai dengan alias SELECT
     }
@@ -782,6 +783,7 @@ func StaggingProduct(c *gin.Context) {
 			p.display_price AS display_price,
 			p.quantity AS quantity,
 			COALESCE(c.name_category, 'Unknown') AS category,
+            p.is_so,
 			p.created_at
 		FROM products p
 		LEFT JOIN categories c ON c.id = p.category_id
@@ -807,6 +809,7 @@ func StaggingProduct(c *gin.Context) {
 			b.total_price_custom AS display_price,
             b.total_product AS quantity,
 			COALESCE(c.name_category, 'Unknown') AS category,
+            b.is_so,
 			b.created_at
 		FROM bundles b
 		LEFT JOIN categories c ON c.id = b.category_id
@@ -1942,7 +1945,7 @@ func GetDetailProduct(c *gin.Context) {
 }
 
 func GetProductsByCategory(c *gin.Context) {
-    type ProductResult struct {
+    type productResult struct {
         ID                 uint      `json:"id"`
         SourceType         string    `json:"source_type"` // product | bundle
         Barcode            string    `json:"barcode"`
@@ -1952,11 +1955,11 @@ func GetProductsByCategory(c *gin.Context) {
         CreatedAt          time.Time `json:"created_at"`
         Status             string    `json:"new_status_product"`
         DisplayPrice       float64   `json:"display_price"`
-        OldBarcodeProduct  string    `json:"old_barcode_product"`
-        OldNameProduct     string    `json:"old_name_product"`
-        OldQuantityProduct int       `json:"old_quantity_product"`
-        OldPriceProduct    float64   `json:"old_price_product"`
-        StatusSo           string    `json:"status_so"`
+        OldBarcodeProduct  *string    `json:"old_barcode_product"`
+        OldNameProduct     *string    `json:"old_name_product"`
+        OldQuantityProduct *int       `json:"old_quantity_product"`
+        OldPriceProduct    *float64   `json:"old_price_product"`
+        IsSo               string    `json:"is_so"`
     }
 
 	q := strings.TrimSpace(c.Query("q"))
@@ -1976,10 +1979,10 @@ func GetProductsByCategory(c *gin.Context) {
 	if q != "" {
 		searchCondition = `
 			AND (
-				name_category LIKE ?
-				OR barcode LIKE ?
-				OR name LIKE ?
-				OR status LIKE ?
+				x.name_category LIKE ?
+				OR x.barcode LIKE ?
+				OR x.name LIKE ?
+				OR x.status LIKE ?
 			)
 		`
 		search := "%" + q + "%"
@@ -1987,126 +1990,83 @@ func GetProductsByCategory(c *gin.Context) {
 	}
 
 	// UNION QUERY (DATA)
-	dataQuery := fmt.Sprintf(`
-		SELECT * FROM (
-			SELECT
-				p.id,
-                'product' AS source_type,
-				p.barcode AS barcode,
-				p.name AS name,
-				c.name_category AS name_category,
-				p.price,
-				p.created_at,
-				p.status AS status,
-				p.display_price,
-				p.old_barcode_product,
-				p.old_name_product,
-				p.old_quantity_product,
-				p.old_price_product,
-                CASE
-                    WHEN p.is_so = 'done' THEN 'Sudah SO'
-                    ELSE 'Belum SO'
-                END AS status_so
-			FROM products p
-			LEFT JOIN categories c ON c.id = p.category_id
-			WHERE p.tag_color_id IS NULL
-				AND p.category_id IS NOT NULL
-				AND p.status IN ('display','expired','slow_moving')
-				AND p.location_type = 'main'
-				AND p.quality = 'lolos'
-				AND (p.warehouse_type IS NULL OR p.warehouse_type = 'type1')
+	baseQuery := `
+        SELECT
+            p.id,
+            'product' AS source_type,
+            p.barcode AS barcode,
+            p.name AS name,
+            c.name_category AS name_category,
+            p.price,
+            p.created_at,
+            p.status AS status,
+            p.display_price,
+            p.old_barcode_product,
+            p.old_name_product,
+            p.old_quantity_product,
+            p.old_price_product,
+            p.is_so
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.tag_color_id IS NULL
+            AND p.category_id IS NOT NULL
+            AND p.status IN ('display','expired','slow_moving')
+            AND p.location_type = 'main'
+            AND p.quality = 'lolos'
+            AND (p.warehouse_type IS NULL OR p.warehouse_type = 'type1')
 
-			UNION ALL
+        UNION ALL
 
-			SELECT
-				b.id,
-                'bundle' AS source_type,
-				b.barcode AS barcode,
-				b.name_bundle AS name,
-				c.name_category AS name_category,
-				b.total_price_custom AS price,
-				b.created_at,
-				CASE 
-					WHEN b.status = 'not_sale' THEN 'display'
-					ELSE b.status
-				END AS status,
-				b.total_price_custom AS display_price,
-                NULL AS old_barcode_product,
-                NULL AS old_name_product,
-                NULL AS old_quantity_product,
-                NULL AS old_price_product,
-                CASE
-                    WHEN b.is_so = 'done' THEN 'Sudah SO'
-                    ELSE 'Belum SO'
-                END AS status_so
-			FROM bundles b
-			LEFT JOIN categories c ON c.id = b.category_id
-			WHERE b.total_price_custom >= 100000
-				AND b.tag_color_id IS NULL
-				AND b.category_id IS NOT NULL
-				AND b.status != 'bundle'
-				AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
-		) x
-		WHERE 1=1
-		%s
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
-	`, searchCondition)
+        SELECT
+            b.id,
+            'bundle' AS source_type,
+            b.barcode AS barcode,
+            b.name_bundle AS name,
+            c.name_category AS name_category,
+            b.total_price_custom AS price,
+            b.created_at,
+            CASE 
+                WHEN b.status = 'not_sale' THEN 'display'
+                ELSE b.status
+            END AS status,
+            b.total_price_custom AS display_price,
+            NULL AS old_barcode_product,
+            NULL AS old_name_product,
+            NULL AS old_quantity_product,
+            NULL AS old_price_product,
+            b.is_so
+        FROM bundles b
+        LEFT JOIN categories c ON c.id = b.category_id
+        WHERE b.total_price_custom < 100000
+            AND b.tag_color_id IS NULL
+            AND b.category_id IS NOT NULL
+            AND b.status != 'sale'
+            AND (b.warehouse_type IS NULL OR b.warehouse_type IN ('type1','type2'))
+	`
+    countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (%s) x WHERE 1=1 %s
+	`, baseQuery, searchCondition)
 
 	argsData := append([]interface{}{}, args...)
-	argsData = append(argsData, limit, offset)
 
-	var results []ProductResult
-	if err := config.DB.Raw(dataQuery, argsData...).Scan(&results).Error; err != nil {
-		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+	var results []productResult
+    var totalData int64
+	if err := config.DB.Raw(countQuery, argsData...).Scan(&totalData).Error; err != nil {
+		helpers.ErrorResponse(c, 500, "Gagal menghitung total data", err)
 		return
 	}
 
-	// COUNT QUERY
-	countQuery := fmt.Sprintf(`
-        SELECT COUNT(*) FROM (
-            SELECT 
-                p.id AS id,
-                p.barcode AS barcode,
-                p.name AS name,
-                c.name_category AS name_category,
-                p.status AS status
-            FROM products p
-            LEFT JOIN categories c ON c.id = p.category_id
-            WHERE p.tag_color_id IS NULL
-                AND p.category_id IS NOT NULL
-                AND p.status IN ('display','expired')
-                AND p.location_type = 'main'
-                AND p.quality = 'lolos'
-                AND (p.warehouse_type IS NULL OR p.warehouse_type = 'type1')
+	dataQuery := fmt.Sprintf(`
+		SELECT * FROM (%s) x 
+		WHERE 1=1 %s 
+		ORDER BY created_at DESC 
+		LIMIT ? OFFSET ?
+	`, baseQuery, searchCondition)
 
-            UNION ALL
+	argsData = append(argsData, limit, offset)
 
-            SELECT 
-                b.id AS id,
-                b.barcode AS barcode,
-                b.name_bundle AS name,
-                c.name_category AS name_category,
-                CASE 
-                    WHEN b.status = 'not_sale' THEN 'display'
-                    ELSE b.status
-                END AS status
-            FROM bundles b
-            LEFT JOIN categories c ON c.id = b.category_id
-            WHERE b.total_price_custom >= 100000
-                AND b.tag_color_id IS NULL
-                AND b.category_id IS NOT NULL
-                AND b.status != 'bundle'
-                AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
-        ) x
-        WHERE 1=1
-        %s
-    `, searchCondition)
-
-
-	var totalData int64
-	if err := config.DB.Raw(countQuery, args...).Scan(&totalData).Error; err != nil {
-		c.JSON(500, gin.H{"status": false, "error": err.Error()})
+	if err := config.DB.Raw(dataQuery, argsData...).Scan(&results).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengambil data produk", err)
 		return
 	}
 
@@ -2118,12 +2078,14 @@ func GetProductsByCategory(c *gin.Context) {
 		"status":  true,
 		"message": "List Product by category",
 		"resource": gin.H{
+			"current_page":   page,
 			"total":          totalData,
 			"data":           results,
-			"current_page":   page,
 			"last_page":      lastPage,
 			"per_page":       limit,
             "links":           links,
+            "from":           offset + 1,
+            "to":             offset + len(results),
 		},
 	})
 }
