@@ -798,7 +798,7 @@ func ShowBagProductDetail(c *gin.Context) {
 }
 func CreateBulkyDocument(c *gin.Context) {
 	type payloadRequest struct {
-		DiscountBulky float64 `json:"discount_bulky" binding:"required_if=Type online,omitempty,gte=0,lte=100"`
+		DiscountBulky *float64 `json:"discount_bulky" binding:"required_if=Type online,omitempty,min=0,max=100"`
 		BuyerID       *uint64 `json:"buyer_id"`
 		NameDocument  string  `json:"name_document" binding:"required"`
 		Type		  string  `json:"type" binding:"required,oneof=offline online"`
@@ -827,7 +827,7 @@ func CreateBulkyDocument(c *gin.Context) {
 					if e.Tag() == "required_if" {
 						errors["discount_bulky"] = "Diskon wajib diisi jika tipe adalah online"
 					}else {
-						errors["discount_bulky"] = "Diskon harus lebih besar dari 0 dan kurang dari 100"
+						errors["discount_bulky"] = "Diskon min 0 dan max 100"
 					}
 				case "namedocument":
 					if e.Tag() == "required" {
@@ -957,13 +957,16 @@ func CreateBulkyDocument(c *gin.Context) {
 		CodeDocument: 		code_doc,	
 		TotalProduct:   	0,
 		TotalOldPrice:  	0,
-		DiscountBulky:       req.DiscountBulky,
 		AfterPriceBulky:     0,
 		CategoryBulky:       nil,
 		StatusBulky:         "proses",
 		IsSale: 		   "not_sale",
 		NameDocument:        finalName,
 		TypeBulky: 			req.Type,
+	}
+
+	if req.DiscountBulky != nil {
+		bulky.DiscountBulky = *req.DiscountBulky
 	}
 
 	if buyer != nil {

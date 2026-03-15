@@ -843,7 +843,6 @@ func StaggingProductDetail(c *gin.Context) {
 		},
 	})
 }
-
 func UpdateDataProduct(c *gin.Context) {
     type payloadUpdateProduct struct {
         NewNameProduct     string  `json:"new_name_product" binding:"required"`
@@ -1098,7 +1097,6 @@ func UpdateDataProduct(c *gin.Context) {
     })
     
 }
-
 func StaggingFilterProduct(c *gin.Context) {
     q := strings.TrimSpace(c.Query("q"))
 
@@ -1190,7 +1188,6 @@ func StaggingFilterProduct(c *gin.Context) {
 		},
 	})
 }
-
 func AddToFilterStaging(c *gin.Context) {
     product_id := c.Param("product_id")
 
@@ -1216,7 +1213,6 @@ func AddToFilterStaging(c *gin.Context) {
 		},
 	})
 }
-
 func StaggingFilterApprove(c *gin.Context) {
 	result := config.DB.Model(&models.Product{}).
         Where("staging_stage = ?", "process").Update("staging_stage", "approve")
@@ -1235,7 +1231,6 @@ func StaggingFilterApprove(c *gin.Context) {
 		},
 	})
 }
-
 func DestroyFilterProduct(c *gin.Context) {
     product_id := c.Param("product_id")
 
@@ -1261,7 +1256,6 @@ func DestroyFilterProduct(c *gin.Context) {
 		},
 	})
 }
-
 func ProductToDamaged(c *gin.Context) {
     user := c.MustGet("auth_user").(models.User)
     //payload
@@ -1448,7 +1442,6 @@ func ProductToDamaged(c *gin.Context) {
         "message": "Product berhasil diubah ke damaged",
     })
 }
-
 func ExportStagingProduct(c *gin.Context) {
     loc, err := time.LoadLocation("Asia/Jakarta")
     if err != nil {
