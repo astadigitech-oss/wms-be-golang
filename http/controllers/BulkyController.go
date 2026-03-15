@@ -176,13 +176,13 @@ func GetSummaryBulkySales(c *gin.Context) {
 }
 func DetailBulkyDocument(c *gin.Context) {
 	db := config.DB
-	documentID := c.Param("bulky_doc_id")
+	documentID := c.Param("doc_id")
 
 	// =========================
 	// Ambil bulky document
 	// =========================
 	var bulkyDocument models.BulkyDocument
-	if err := db.First(&bulkyDocument, documentID).Error; err != nil {
+	if err := db.Where("id = ?", documentID).First(&bulkyDocument).Error; err != nil {
 		c.JSON(404, gin.H{
 			"success": false,
 			"message": "Data bulky document tidak ditemukan",
@@ -1402,7 +1402,8 @@ func StoreBagBulkyDocument(c *gin.Context) {
 	// =========================
 	// Setup category name
 	// =========================
-	var categoryName string
+	var categoryName string 
+	var categorySlug *string
 	if req.Type == "category" {
 		if req.CategoryID == nil {
 			helpers.ErrorResponse(c, 500, "Category ID wajib diisi untuk type category", nil)
@@ -1422,6 +1423,7 @@ func StoreBagBulkyDocument(c *gin.Context) {
 			return
 		}
 		categoryName = category.NameCategory
+		categorySlug = &category.CategorySlug
 	}else {
 		categoryName = req.ColorName
 		req.CategoryID = nil
@@ -1507,6 +1509,7 @@ func StoreBagBulkyDocument(c *gin.Context) {
 		Type: 		   req.Type,
 		CategoryID: 	 req.CategoryID,
 		CategoryBag: 	categoryName,
+		CategorySlug: 	categorySlug,
 		TotalProduct:     0,
 		Status:           "proses",
 		NameBag:          fmt.Sprintf("%s-%d", username, nextNumber),
@@ -1793,14 +1796,14 @@ func StoreBulkySale(c *gin.Context) {
 
 	isBundle = false
 	if bag.Type == "category" {
-		category := ""
+		category_slug := ""
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Preload("Category").
 			Where("barcode = ?", req.BarcodeProduct).
 			First(&product).Error
 
 		if product.Category != nil {
-			category = product.Category.NameCategory
+			category_slug = product.Category.CategorySlug
 		}
 
 		if err != nil {
@@ -1817,7 +1820,7 @@ func StoreBulkySale(c *gin.Context) {
 				return
 			}
 			isBundle = true
-			category = bundle.Category.NameCategory
+			category_slug = bundle.Category.CategorySlug
 		}
 	
 		if (!isBundle && product.Status == "sale") || (isBundle && bundle.Status == "sale") {
@@ -1829,7 +1832,7 @@ func StoreBulkySale(c *gin.Context) {
 			return
 		}
 
-		if !strings.EqualFold(bag.CategoryBag, category) {
+		if !strings.EqualFold(*bag.CategorySlug, category_slug) {
 			tx.Rollback()
 			helpers.ErrorResponse(c, 400, "Kategori produk tidak sesuai dengan kategori bag", nil)
 			return
@@ -2368,10 +2371,7 @@ func ProductsCargo(c *gin.Context) {
 
 	user := c.MustGet("auth_user").(models.User)
 
-	var activeBag struct {
-		Type        string
-		CategoryBag string
-	}
+	var activeBag models.BagProduct
 
 	if doc_id == "" {
 		helpers.ErrorResponse(c, http.StatusBadRequest, "Query bulky_document_id wajib ada", nil)
@@ -2379,7 +2379,6 @@ func ProductsCargo(c *gin.Context) {
 	}
 
 	if err := config.DB.Model(&models.BagProduct{}).
-		Select("type, category_bag").
 		Where("user_id = ? AND bulky_document_id = ? AND status = 'proses'",user.ID, doc_id).
 		First(&activeBag).Error; err != nil {
 		helpers.ErrorResponse(c, http.StatusInternalServerError, "Bag status proses tidak ditemukan. Silahkan buat bag terlebih dahulu!", err)
@@ -2480,10 +2479,9 @@ func ProductsCargo(c *gin.Context) {
 			AND (
 				t.barcode LIKE ?
 				OR t.name LIKE ?
-				OR t.category LIKE ?
 			)
 		`
-		args = append(args, search, search, search)
+		args = append(args, search, search)
 	}
 
 	// UNION QUERY (DATA)
@@ -2495,12 +2493,12 @@ func ProductsCargo(c *gin.Context) {
 			c.name_category AS category,
 			p.created_at AS created_date
 		FROM products p
-		LEFT JOIN categories c ON c.id = p.category_id
+		JOIN categories c ON c.id = p.category_id
 		WHERE p.tag_color_id IS NULL
 			AND p.category_id IS NOT NULL
 			AND p.status IN ('display','expired','slow_moving')
 			AND p.quality = 'lolos'
-			AND c.name_category = ?
+			AND (c.category_slug = ? OR c.name_category = ?)
 
 		UNION ALL
 
@@ -2511,20 +2509,20 @@ func ProductsCargo(c *gin.Context) {
 			c.name_category AS category,
 			b.created_at AS created_date
 		FROM bundles b
-		LEFT JOIN categories c ON c.id = b.category_id
+		JOIN categories c ON c.id = b.category_id
 		WHERE b.total_price_custom >= 100000
 			AND b.tag_color_id IS NULL
 			AND b.category_id IS NOT NULL
 			AND b.status != 'sale'
 			AND (b.warehouse_type IS NULL OR b.warehouse_type = 'type1')
-			AND c.name_category = ?
+			AND (c.category_slug = ? OR c.name_category = ?)
 	`
 
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) FROM (%s) t WHERE 1=1 %s
 	`, baseQuery, searchCondition)
 
-	argsBase := []interface{}{activeBag.CategoryBag, activeBag.CategoryBag}
+	argsBase := []interface{}{activeBag.CategorySlug, activeBag.CategoryBag, activeBag.CategorySlug, activeBag.CategoryBag}
 	argsBase = append(argsBase, args...)
 
 	var totalProduct int64

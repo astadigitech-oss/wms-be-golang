@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"liquid8/wms/config"
+	"liquid8/wms/helpers"
 	"liquid8/wms/models"
 	"os"
 	"path/filepath"
@@ -169,6 +170,7 @@ func AddCategory(c *gin.Context) {
 
 	category := models.Category{
 		NameCategory:     payload.NameCategory,
+		CategorySlug: helpers.CreateCategorySlug(payload.NameCategory),
 		DiscountCategory: payload.DiscountCategory,
 		MaxPriceCategory: payload.MaxPriceCategory,
 	}
@@ -238,6 +240,7 @@ func UpdateCategory(c *gin.Context) {
 	}
 
 	category.NameCategory = payload.NameCategory
+	category.CategorySlug = helpers.CreateCategorySlug(payload.NameCategory)
 	category.DiscountCategory = payload.DiscountCategory
 	category.MaxPriceCategory = payload.MaxPriceCategory
 

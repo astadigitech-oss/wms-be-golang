@@ -1137,6 +1137,7 @@ func CalculateCurrentBalance() (int64, float64, error) {
         CategoryProduct    string  `gorm:"column:category_product"`
         TotalCategory      int64   `gorm:"column:total_category"`
         TotalPriceCategory float64 `gorm:"column:total_price_category"`
+        BeforePriceCategory float64 `gorm:"column:before_price_category"`
     }
 
     type tagResult struct {
@@ -1153,13 +1154,15 @@ func CalculateCurrentBalance() (int64, float64, error) {
         SELECT 
             c.name_category as category_product,
             COUNT(p.id) as total_category,
-            SUM(p.price) as total_price_category
+            SUM(p.price) as total_price_category,
+            SUM(p.old_price_product) as before_price_category
         FROM products p
         JOIN categories c ON c.id = p.category_id
         WHERE p.location_type = 'main'
-        AND p.tag_color_id IS NULL
-        AND p.quality = 'lolos'
-        AND p.status IN ('display','expired','slow_moving')
+			AND p.category_id IS NOT NULL
+			AND p.tag_color_id IS NULL
+			AND p.quality = 'lolos'
+			AND p.status IN ('display','expired','slow_moving')
         GROUP BY c.name_category
     `).Scan(&categoryMain).Error
 
@@ -1176,12 +1179,13 @@ func CalculateCurrentBalance() (int64, float64, error) {
         SELECT 
             c.name_category as category_product,
             COUNT(b.id) as total_category,
-            SUM(b.total_price_custom) as total_price_category
+            SUM(b.total_price_custom) as total_price_category,
+            SUM(b.total_price) as before_price_category
         FROM bundles b
         JOIN categories c ON c.id = b.category_id
         WHERE b.category_id IS NOT NULL
-        AND b.tag_color_id IS NULL
-        AND b.status NOT IN ('bundle')
+			AND b.tag_color_id IS NULL
+			AND b.status NOT IN ('bundle','sale')
         GROUP BY c.name_category
     `).Scan(&categoryBundle).Error
 
@@ -1200,7 +1204,8 @@ func CalculateCurrentBalance() (int64, float64, error) {
         SELECT 
             t.name_color as tag_product,
             COUNT(p.id) as total_tag_product,
-            SUM(p.price) as total_price_tag_product
+            SUM(p.price) as total_price_tag_product,
+            SUM(p.old_price_product) as before_price_tag_product
         FROM products p
         JOIN color_tags t ON t.id = p.tag_color_id
         WHERE p.tag_color_id IS NOT NULL
@@ -1223,7 +1228,8 @@ func CalculateCurrentBalance() (int64, float64, error) {
         SELECT 
             c.name_category as category_product,
             COUNT(p.id) as total_category,
-            SUM(p.price) as total_price_category
+            SUM(p.price) as total_price_category,
+            SUM(p.old_price_product) as before_price_category
         FROM products p
         JOIN categories c ON c.id = p.category_id
         WHERE p.location_type = 'staging'
@@ -1613,4 +1619,20 @@ func BuildBagSummary(bags []models.BagProduct) ([]interface{}, []interface{}, in
 	}
 
 	return summaryBag, categories, totalQty, totalPrice
+}
+
+func CreateCategorySlug(name string) string {
+
+	name = strings.ToLower(name)
+
+	// hapus angka dan kurung
+	re := regexp.MustCompile(`\([^)]*\)`)
+	name = re.ReplaceAllString(name, "")
+
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "&", " ")
+	name = strings.ReplaceAll(name, " ", "-")
+	name = strings.ToLower(name)
+
+	return name
 }

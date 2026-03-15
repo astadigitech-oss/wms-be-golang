@@ -6,6 +6,7 @@ import (
 
 type Category struct {
 	ID               uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	CategorySlug     string    `gorm:"size:255;not null" json:"category_slug"`
 	NameCategory     string    `gorm:"size:255;not null" json:"name_category"`
 	DiscountCategory int      `gorm:"not null" json:"discount_category"`
 	MaxPriceCategory float64  `gorm:"type:decimal(18,2);not null" json:"max_price_category"`
