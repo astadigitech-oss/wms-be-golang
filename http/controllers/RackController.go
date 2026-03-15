@@ -645,14 +645,8 @@ func AddProductToRack(c *gin.Context) {
 		isBundle bool
 	)
 
-	// Filter berdasarkan source (staging vs display)
-	locationType := "main"
-	if rack.Source == "staging" {
-		locationType = "staging"
-	}
-
 	err = tx.Preload("Category").
-		Where("location_type = ?", locationType).
+		Where("location_type IS NOT NULL").
 		Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
 		First(&product).Error
 
@@ -676,8 +670,18 @@ func AddProductToRack(c *gin.Context) {
 
 	prodCatName := ""
 	if isBundle {
+		if rack.Source == "staging" { 
+			tx.Rollback()
+			helpers.ErrorResponse(c, 400, "Bundle tidak bisa dimasukkan ke rak staging", nil)
+			return
+		}
 		prodCatName = strings.ToUpper(strings.TrimSpace(bundle.Category.NameCategory))
 	}else {
+		if rack.Source == "display" && *product.LocationType == "staging" {
+			tx.Rollback()
+			helpers.ErrorResponse(c, 400, "Gagal: Produk staging tidak bisa dimasukkan langsung ke rak display", nil)
+			return
+		}
 		prodCatName = strings.ToUpper(strings.TrimSpace(product.Category.NameCategory))
 	}
 
