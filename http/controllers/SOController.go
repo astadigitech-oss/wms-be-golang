@@ -1038,31 +1038,46 @@ func SoProductDisplay(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User) // dari middleware auth
 	
     var product models.Product
+	var bundle models.Bundle
+	isBundle := false
+	locationType := "main"
+
     err := config.DB.Table("products").
-	Where("location_type = ?", "main").
-	Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
-	First(&product).Error
+		Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+		First(&product).Error
 	
     if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			helpers.ErrorResponse(c, 404, fmt.Sprintf("Produk tidak ditemukan dengan barcode: %s", barcode), err)
-		}else {
+		err = config.DB.Where("barcode = ?", barcode).First(&bundle).Error; 
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				helpers.ErrorResponse(c, 404, fmt.Sprintf("Produk/Bundle tidak ditemukan dengan barcode: %s", barcode), err)
+				return
+			}
+
 			helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+			return
 		}
-        return
+		isBundle = true
     }
 
     // Cek sudah pernah SO
-    if product.IsSo != nil && *product.IsSo == "done" {
+    if !isBundle && product.IsSo != nil && *product.IsSo == "done" {
         c.JSON(422, gin.H{
             "success":  false,
             "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
         })
         return
     }
+    if isBundle && bundle.IsSo != nil && *bundle.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + bundle.NameBundle + " sudah di SO sebelumnya.",
+        })
+        return
+    }
 
     // ===== Cek quality migrate =====
-    if product.Quality != "lolos" {
+    if !isBundle && product.Quality != "lolos" {
         failReason := "Kualitas tidak memenuhi syarat"
 		if product.QualityText != nil {
 			failReason = *product.QualityText
@@ -1075,23 +1090,30 @@ func SoProductDisplay(c *gin.Context) {
     }
 
     // ===== Update SO =====
-    if err := config.DB.Model(&product).
-        Updates(map[string]interface{}{
-            "is_so":   "done",
-            "user_so": user.ID,
-        }).Error; err != nil {
-
-        c.JSON(500, gin.H{
-            "success":  false,
-            "message": err.Error(),
-        })
-        return
-    }
+	if isBundle {
+		if err := config.DB.Model(&bundle).Updates(map[string]interface{}{
+				"is_so":   "done",
+				"user_so": user.ID,
+			}).Error; err != nil {
+	
+			helpers.ErrorResponse(c, 500, "Gagal so product", err)
+			return
+		}
+	}else {
+		if err := config.DB.Model(&product).Updates(map[string]interface{}{
+				"is_so":   "done",
+				"user_so": user.ID,
+				"location_type": locationType,
+			}).Error; err != nil {
+	
+			helpers.ErrorResponse(c, 500, "Gagal so product", err)
+			return
+		}
+	}
 
     c.JSON(200, gin.H{
         "success":  true,
-        "message": "Berhasil SO: " + product.Name,
-        "data":    product,
+        "message": "Berhasil SO Product",
     })
 }
 func SoProductStaging(c *gin.Context) {
@@ -1099,31 +1121,45 @@ func SoProductStaging(c *gin.Context) {
 	user := c.MustGet("auth_user").(models.User) // dari middleware auth
 	
     var product models.Product
+    var bundle models.Bundle
+	isBundle := false
     err := config.DB.Table("products").
-	Where("location_type = ?", "staging").
-	Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
-	First(&product).Error
+		Where("location_type = ?", "staging").
+		Where("(barcode = ? OR old_barcode_product = ?)", barcode, barcode).
+		First(&product).Error
 	
     if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			helpers.ErrorResponse(c, 404, fmt.Sprintf("Produk tidak ditemukan dengan barcode: %s", barcode), err)
-		}else {
+		err = config.DB.Where("barcode = ?", barcode).First(&bundle).Error; 
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				helpers.ErrorResponse(c, 404, fmt.Sprintf("Produk/Bundle tidak ditemukan dengan barcode: %s", barcode), err)
+				return
+			}
+
 			helpers.ErrorResponse(c, 500, "Internal Server Error", err)
+			return
 		}
-        return
+		isBundle = true
     }
 
     // Cek sudah pernah SO
-    if product.IsSo != nil && *product.IsSo == "done" {
+    if !isBundle && product.IsSo != nil && *product.IsSo == "done" {
         c.JSON(422, gin.H{
             "success":  false,
             "message": "Gagal: Produk " + product.Name + " sudah di SO sebelumnya.",
         })
         return
     }
+	if isBundle && bundle.IsSo != nil && *bundle.IsSo == "done" {
+        c.JSON(422, gin.H{
+            "success":  false,
+            "message": "Gagal: Produk " + bundle.NameBundle + " sudah di SO sebelumnya.",
+        })
+        return
+    }
 
     // ===== Cek quality migrate =====
-    if product.Quality != "lolos" {
+    if !isBundle && product.Quality != "lolos" {
 		failReason := "Kualitas tidak memenuhi syarat"
 		if product.QualityText != nil {
 			failReason = *product.QualityText
@@ -1136,23 +1172,29 @@ func SoProductStaging(c *gin.Context) {
     }
 
     // ===== Update SO =====
-    if err := config.DB.Model(&product).
-        Updates(map[string]interface{}{
-            "is_so":   "done",
-            "user_so": user.ID,
-        }).Error; err != nil {
-
-        c.JSON(500, gin.H{
-            "success":  false,
-            "message": err.Error(),
-        })
-        return
-    }
+    if isBundle {
+		if err := config.DB.Model(&bundle).Updates(map[string]interface{}{
+				"is_so":   "done",
+				"user_so": user.ID,
+			}).Error; err != nil {
+	
+			helpers.ErrorResponse(c, 500, "Gagal so product", err)
+			return
+		}
+	}else {
+		if err := config.DB.Model(&product).Updates(map[string]interface{}{
+				"is_so":   "done",
+				"user_so": user.ID,
+			}).Error; err != nil {
+	
+			helpers.ErrorResponse(c, 500, "Gagal so product", err)
+			return
+		}
+	}
 
     c.JSON(200, gin.H{
         "success":  true,
-        "message": "Berhasil SO: " + product.Name,
-        "data":    product,
+        "message": "Berhasil SO Product",
     })
 }
 func SoRackByID(c *gin.Context) {
