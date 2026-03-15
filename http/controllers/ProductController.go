@@ -711,7 +711,7 @@ func incrementOrCreateSoColor(tx *gorm.DB,summaryColorID uint,color string,quali
 // ============================= STAGGING =============================
 type productWithCategoryName struct {
     ID          uint      `json:"id"`
-    CodeDocument          string      `json:"code_document"`
+    CodeDocument string    `json:"code_document"`
     Barcode     string    `json:"barcode"`
     Name        string    `json:"name"`
     Price       float64   `json:"price"`
@@ -719,11 +719,10 @@ type productWithCategoryName struct {
     Status      string    `json:"status"`
     DisplayPrice float64   `json:"display_price"`
     Quantity    int       `json:"quantity"`
-    CategoryID  uint      `json:"category_id"`
-    CategoryName string   `json:"category_name"` // Harus sesuai dengan alias SELECT
-    CreatedAt string   `json:"created_at"` // Harus sesuai dengan alias SELECT
+    CategoryID  *uint64   `json:"category_id"`
+    CategoryName    string    `json:"category_name"` // Harus sesuai dengan alias SELECT
+    CreatedAt   string    `json:"created_at"` // Harus sesuai dengan alias SELECT
 }
-
 // stagging
 func StaggingProduct(c *gin.Context) {
     q := strings.TrimSpace(c.Query("q"))
@@ -735,59 +734,115 @@ func StaggingProduct(c *gin.Context) {
 	limit := 50
 	offset := (page - 1) * limit
 
-	var products []productWithCategoryName
+    type productData struct {
+        ID          uint      `json:"id"`
+        Source      string    `json:"source"`
+        CodeDocument string    `json:"code_document"`
+        Barcode     string    `json:"barcode"`
+        Name        string    `json:"name"`
+        Price       float64   `json:"price"`
+        OldPrice    float64   `json:"old_price"`
+        Status      string    `json:"status"`
+        DisplayPrice float64   `json:"display_price"`
+        Quantity    int       `json:"quantity"`
+        Category    string    `json:"category"` // Harus sesuai dengan alias SELECT
+        CreatedAt   string    `json:"created_at"` // Harus sesuai dengan alias SELECT
+    }
+
+	var products []productData
 	var total int64
 
-	db := config.DB.Model(&models.Product{}).
-        Select(`
-            products.id, 
-            products.code_document,
-            products.barcode,
-            products.name,
-            products.price,
-            products.old_price_product AS old_price,
-            products.status,
-            products.display_price,
-            products.quantity,
-            products.category_id, 
-            products.created_at, 
-            categories.name_category AS category_name
-        `).
-        Joins("LEFT JOIN categories ON categories.id = products.category_id").
-        Where("products.status IN ?", []string{"display", "expired", "slow_moving"}).
-        Where("products.quality = ?", "lolos").
-        Where("products.location_type = ?", "staging").
-        Where("products.staging_stage IS NULL")
+    // SEARCH CONDITION
+	searchCondition := ""
+	args := []interface{}{}
 
-    // FILTERING
 	if q != "" {
-        like := "%" + q + "%"
-
-        db = db.Where(`(
-            products.barcode LIKE ? OR
-            products.name LIKE ? OR
-            categories.name_category LIKE ?)`, like, like, like)
+		search := "%" + q + "%"
+		searchCondition = `
+			AND (
+				t.barcode LIKE ?
+				OR t.name LIKE ?
+				OR t.category LIKE ?
+			)
+		`
+		args = append(args, search, search, search)
 	}
 
-	// TOTAL COUNT (for pagination info)
-    countDB := db.Session(&gorm.Session{})
-	if err := countDB.Count(&total).Error; err != nil {
-		c.JSON(500, gin.H{"success": false, "message": err})
+	// UNION QUERY (DATA)
+	baseQuery := `
+		SELECT
+            p.id AS id,
+            'product' AS source,
+            p.code_document AS code_document,
+			p.barcode AS barcode,
+			p.name AS name,
+			p.price AS price,
+			p.old_price_product AS old_price,
+			p.status AS status,
+			p.display_price AS display_price,
+			p.quantity AS quantity,
+			COALESCE(c.name_category, 'Unknown') AS category,
+			p.created_at
+		FROM products p
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE p.tag_color_id IS NULL
+			AND p.category_id IS NOT NULL
+			AND p.status IN ('display','expired','slow_moving')
+			AND p.quality = 'lolos'
+
+		UNION ALL
+
+		SELECT
+            b.id AS id,
+            'bundle' AS source,
+            '-' AS code_document,
+			b.barcode AS barcode,
+			b.name_bundle AS name,
+			b.total_price_custom AS price,
+			b.total_price AS old_price,
+            CASE
+                WHEN b.status = 'not_sale' THEN 'display'
+                ELSE b.status
+            END AS status,
+			b.total_price_custom AS display_price,
+            b.total_product AS quantity,
+			COALESCE(c.name_category, 'Unknown') AS category,
+			b.created_at
+		FROM bundles b
+		LEFT JOIN categories c ON c.id = b.category_id
+		WHERE b.total_price >= 100000
+            AND b.tag_color_id IS NULL
+			AND b.category_id IS NOT NULL
+			AND b.status != 'sale'
+			AND (b.warehouse_type IS NULL OR b.warehouse_type IN ('type1', 'type2'))
+	`
+
+    countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (%s) t WHERE 1=1 %s
+	`, baseQuery, searchCondition)
+
+	argsBase := append([]interface{}{}, args...)
+	if err := config.DB.Raw(countQuery, argsBase...).Scan(&total).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal menghitung total produk", err)
 		return
 	}
 
-	// GET DATA
-	if err := db.
-		Limit(limit).
-		Offset(offset).
-		Find(&products).Error; err != nil {
+    dataQuery := fmt.Sprintf(`
+		SELECT * FROM (%s) t 
+		WHERE 1=1 %s 
+		ORDER BY created_at DESC 
+		LIMIT ? OFFSET ?
+	`, baseQuery, searchCondition)
 
-		c.JSON(500, gin.H{"success": false, "message": err.Error()})
+	argsData := append([]interface{}{}, argsBase...)
+	argsData = append(argsData, limit, offset)
+
+	if err := config.DB.Raw(dataQuery, argsData...).Scan(&products).Error; err != nil {
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Gagal mengambil data produk", err)
 		return
 	}
-
-	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 	// pagination links
+	lastPage := int(math.Ceil(float64(total) / float64(limit)))
 	links := helpers.BuildPaginationLinks(c, page, lastPage)
 
 	// FINAL RESPONSE
@@ -808,7 +863,6 @@ func StaggingProduct(c *gin.Context) {
 		},
 	})
 }
-
 func StaggingProductDetail(c *gin.Context) {
     product_id := c.Param("product_id")
 
@@ -1153,7 +1207,7 @@ func StaggingFilterProduct(c *gin.Context) {
             products.quantity,
             products.category_id, 
             products.created_at, 
-            categories.name_category AS category_name
+            COALESCE(categories.name_category, 'Unknown') AS category_name
         `).
 		Limit(limit).
 		Offset(offset).
@@ -1636,7 +1690,6 @@ func StaggingApprovement(c *gin.Context) {
 		},
 	})
 }
-
 func DestroyStaggingApprove(c *gin.Context) {
     product_id := c.Param("product_id")
 
@@ -1662,7 +1715,6 @@ func DestroyStaggingApprove(c *gin.Context) {
 		},
 	})
 }
-
 func StaggingApprovesStore(c *gin.Context) {
     updateData := map[string]interface{}{
         "staging_stage": nil,
