@@ -413,8 +413,9 @@ func AddProductBundle(c *gin.Context) {
 
 	//get data product
 	var product models.Product
-    if err := tx.Where("status IN ?", []string{"display","expired"}).
-		First(&product, productID).Error; err != nil {
+    if err := tx.Where("id = ?", productID).
+		Where("status IN ?", []string{"display","expired"}).
+		First(&product).Error; err != nil {
         tx.Rollback()
         c.JSON(404, gin.H{"status": false, "message": "Product not found"})
         return
@@ -1085,8 +1086,9 @@ func BundleAddFilterProduct(c *gin.Context) {
 
 	productID, _ := strconv.ParseUint(id, 10, 64)
     var product models.Product
-    if err := config.DB.Where("status IN ?", []string{"display", "expired"}).
-		First(&product, productID).Error; err != nil {
+    if err := config.DB.Where("id = ?", productID).
+		Where("status IN ?", []string{"display", "expired"}).
+		First(&product).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
             c.JSON(http.StatusForbidden, gin.H{"status": false, "message": "product tidak ditemukan"})
             return
