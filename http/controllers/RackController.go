@@ -559,6 +559,12 @@ func UpdateRack(c *gin.Context) {
 		return
 	}
 
+	//SO Process
+	// if rack.IsSo {
+	// 	helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s sudah di so, tidak bisa melakukan update", rack.Name), nil)
+	// 	return
+	// }
+
 	updateData := map[string]interface{}{}
 	if rack.Source == "staging" {
 		if payload.DisplayRackID == nil {
@@ -626,6 +632,12 @@ func AddProductToRack(c *gin.Context) {
 		c.JSON(404, gin.H{"status": false, "message": "Rack tidak ditemukan"})
 		return
 	}
+
+	//SO Process
+	// if rack.IsSo {
+	// 	helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s sudah di so, tidak bisa menambah product", rack.Name), nil)
+	// 	return
+	// }
 
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
 	if tx.Error != nil {
@@ -814,6 +826,12 @@ func RemoveProductFromRack(c *gin.Context) {
 		return
 	}
 
+	//SO Process
+	// if rack.IsSo {
+	// 	helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s sudah di so, tidak bisa menghapus product", rack.Name), nil)
+	// 	return
+	// }
+
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
@@ -933,6 +951,12 @@ func DeleteRack(c *gin.Context) {
 		return
 	}
 
+	//SO Process
+	// if rack.IsSo {
+	// 	helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s sudah di so, tidak bisa dihapus", rack.Name), nil)
+	// 	return
+	// }
+
 	tx := config.DB.WithContext(c.Request.Context()).Begin()
 	if tx.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to start database transaction"})
@@ -1012,11 +1036,11 @@ func MoveRackToDisplay(c *gin.Context) {
 	}
 
 	//SO Process
-	if !rack.IsSo {
-		tx.Rollback()
-		helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s belum di so, tidak bisa pindah ke display", rack.Name), nil)
-		return
-	}
+	// if !rack.IsSo {
+	// 	tx.Rollback()
+	// 	helpers.ErrorResponse(c, 422, fmt.Sprintf("Rack %s belum di so, tidak bisa pindah ke display", rack.Name), nil)
+	// 	return
+	// }
 
 	if rack.DisplayRackID == nil {
 		tx.Rollback()
